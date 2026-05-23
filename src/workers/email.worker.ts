@@ -9,6 +9,11 @@ import Project from '../models/project.model';
 // Force Node.js to resolve DNS hostnames to IPv4 first (resolves Render's IPv6 ENETUNREACH issues)
 dns.setDefaultResultOrder('ipv4first');
 
+// Custom DNS lookup that filters out IPv6 and forces IPv4
+const ipv4Lookup = (hostname: string, options: any, callback: any) => {
+  return dns.lookup(hostname, { ...options, family: 4 }, callback);
+};
+
 dotenv.config();
 
 const QUEUE_NAME = 'project_assigned_queue';
@@ -19,6 +24,7 @@ const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
   secure: false, // Use STARTTLS
+  lookup: ipv4Lookup, // Force IPv4 only dynamically
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
