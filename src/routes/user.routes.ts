@@ -1,0 +1,53 @@
+import { Router } from 'express';
+import {
+  countactiveuser,
+  countuserbyrole,
+  createUser,
+  fetchuserlimit,
+  getAllUsers,
+  getEmployees,
+  getUserById,
+  loginUser,
+  logoutUser,
+  forgotPassword,
+  resetPassword,
+  updateUser,
+} from '../controllers/user.controller';
+
+const router = Router();
+
+// GET /api/users - Get all users
+router.get('/', getAllUsers);
+router.get('/fetchuserlimit', fetchuserlimit);
+router.get('/countuserbyrole', countuserbyrole);
+router.get('/countactiveusers', countactiveuser);
+
+// GET /api/users/employees - Get employees only (role=employee)
+router.get('/employees', getEmployees);
+
+
+// // GET /api/users/:id - Get user by ID
+router.get('/:id', getUserById);
+
+// // POST /api/users - Create new user
+router.post('/', createUser);
+
+// POST /api/users/login - Login user
+router.post('/login', loginUser);
+
+// POST /api/users/logout - Logout user
+router.post('/logout', logoutUser);
+
+// POST /api/users/forgot-password - Send OTP
+router.post('/forgot-password', forgotPassword);
+
+// POST /api/users/reset-password - Reset password with OTP
+router.post('/reset-password', resetPassword);
+
+// PUT /api/users/:id - Update user
+router.put('/:id', updateUser);
+
+// // DELETE /api/users/:id - Delete user
+// router.delete('/:id', deleteUser);
+
+export default router;
