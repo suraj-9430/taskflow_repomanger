@@ -12,11 +12,19 @@ const TASK_QUEUE_NAME = 'task_assigned_queue';
 
 // Nodemailer transport configuration
 const transporter = nodemailer.createTransport({
-  service: 'gmail', // You can change this to your preferred email service
+  host: 'smtp.gmail.com',
+  port: 587,
+  secure: false, // Use STARTTLS
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
   },
+  tls: {
+    rejectUnauthorized: false // Avoid certificate validation issues in cloud environments
+  },
+  connectionTimeout: 10000, // Time out after 10 seconds instead of hanging forever
+  greetingTimeout: 10000,
+  socketTimeout: 10000
 });
 
 const startWorker = async () => {
