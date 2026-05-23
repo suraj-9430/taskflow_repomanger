@@ -13,10 +13,29 @@ const app: Application = express();
 
 
 
+const allowedOrigins = [
+  'http://localhost:3000',
+  'http://localhost:4200',
+  'http://localhost:5173'
+];
+
+if (config.corsOrigin) {
+  // Support single origin or multiple comma-separated origins
+  const origins = config.corsOrigin.split(',').map(o => o.trim());
+  allowedOrigins.push(...origins);
+}
+
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:4200','http://localhost:5173'],
+  origin: (origin, callback) => {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) !== -1 || allowedOrigins.includes('*')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
-  // or for development: origin: '*'
 }));
 app.use(express.json());
 app.use(cookieParser());
