@@ -3,39 +3,48 @@ import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import dns from 'dns';
+import { promisify } from 'util';
 import User from '../models/user.model';
 import Project from '../models/project.model';
 
+const lookupPromise = promisify(dns.lookup);
+
 // Force Node.js to resolve DNS hostnames to IPv4 first (resolves Render's IPv6 ENETUNREACH issues)
 dns.setDefaultResultOrder('ipv4first');
-
-// Custom DNS lookup that filters out IPv6 and forces IPv4
-const ipv4Lookup = (hostname: string, options: any, callback: any) => {
-  return dns.lookup(hostname, { ...options, family: 4 }, callback);
-};
 
 dotenv.config();
 
 const QUEUE_NAME = 'project_assigned_queue';
 const TASK_QUEUE_NAME = 'task_assigned_queue';
 
-// Nodemailer transport configuration
-const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false, // Use STARTTLS
-  lookup: ipv4Lookup, // Force IPv4 only dynamically
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-  tls: {
-    rejectUnauthorized: false // Avoid certificate validation issues in cloud environments
-  },
-  connectionTimeout: 10000, // Time out after 10 seconds instead of hanging forever
-  greetingTimeout: 10000,
-  socketTimeout: 10000
-} as any);
+// Dynamically create a transporter resolved to Gmail's IPv4 address to bypass Render's IPv6 limits
+const getTransporter = async () => {
+  let resolvedHost = 'smtp.gmail.com';
+  try {
+    const result = await lookupPromise('smtp.gmail.com', { family: 4 });
+    resolvedHost = result.address;
+    console.log(`🌐 [Worker] Dynamically resolved smtp.gmail.com to IPv4: ${resolvedHost}`);
+  } catch (err) {
+    console.warn(`⚠️ [Worker] DNS lookup failed for smtp.gmail.com, falling back to hostname:`, err);
+  }
+
+  return nodemailer.createTransport({
+    host: resolvedHost,
+    port: 587,
+    secure: false, // Use STARTTLS
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    tls: {
+      servername: 'smtp.gmail.com', // CRITICAL: Forces certificate validation to match Gmail domain
+      rejectUnauthorized: false
+    },
+    connectionTimeout: 10000, // Time out after 10 seconds instead of hanging forever
+    greetingTimeout: 10000,
+    socketTimeout: 10000
+  } as any);
+};
 
 const startWorker = async () => {
   try {
@@ -135,7 +144,8 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
       };
 
       console.log(`📧 [Worker] Dispatching SMTP request via Nodemailer to ${user.email}...`);
-      await transporter.sendMail(mailOptions);
+      const currentTransporter = await getTransporter();
+      await currentTransporter.sendMail(mailOptions);
       console.log(`✅ [Worker] SMTP delivery success! Email sent to ${user.email}`);
     }
   } catch (dbOrMailError) {
@@ -188,7 +198,8 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
     };
 
     console.log(`📧 [Worker] Dispatching task SMTP request to ${user.email}...`);
-    await transporter.sendMail(mailOptions);
+    const currentTransporter = await getTransporter();
+    await currentTransporter.sendMail(mailOptions);
     console.log(`✅ [Worker] SMTP delivery success! Task Email sent to ${user.email}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processTaskEmailTask:`, dbOrMailError);
