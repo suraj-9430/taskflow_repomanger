@@ -9,6 +9,7 @@
     "seed": "ts-node src/seed.ts",
     "seed:projects": "ts-node src/seedProjects.ts",
     "worker": "ts-node src/workers/email.worker.ts",
+    "postinstall": "npm run build",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
