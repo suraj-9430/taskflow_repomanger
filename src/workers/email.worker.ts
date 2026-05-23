@@ -2,8 +2,12 @@ import amqp from 'amqplib';
 import nodemailer from 'nodemailer';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
+import dns from 'dns';
 import User from '../models/user.model';
 import Project from '../models/project.model';
+
+// Force Node.js to resolve DNS hostnames to IPv4 first (resolves Render's IPv6 ENETUNREACH issues)
+dns.setDefaultResultOrder('ipv4first');
 
 dotenv.config();
 
@@ -15,7 +19,6 @@ const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 587,
   secure: false, // Use STARTTLS
-  family: 4, // Force IPv4 only (avoids ENETUNREACH IPv6 issue on Render)
   auth: {
     user: process.env.EMAIL_USER,
     pass: process.env.EMAIL_PASS,
