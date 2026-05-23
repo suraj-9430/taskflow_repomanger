@@ -9,9 +9,9 @@ interface CustomError extends Error {
 
 export const errorHandler = (
   err: CustomError,
-  req: Request,
+  _req: Request,
   res: Response,
-  next: NextFunction
+  _next: NextFunction
 ): void => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Server Error';
