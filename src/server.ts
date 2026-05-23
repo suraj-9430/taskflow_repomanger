@@ -12,6 +12,13 @@ const startServer = async (): Promise<void> => {
       console.log(`Server running in ${config.nodeEnv} mode on port ${config.port}`);
       console.log(`Health check: http://localhost:${config.port}`);
     });
+
+    // Start background email worker in the same process in production (Render)
+    if (config.nodeEnv === 'production') {
+      import('./workers/email.worker')
+        .then(() => console.log('🏃 Background Email Worker started inline successfully'))
+        .catch(err => console.error('❌ Failed to start inline Background Email Worker:', err));
+    }
   } catch (error) {
     console.error('Failed to start server:', error);
     process.exit(1);
