@@ -25,9 +25,7 @@
     "express": "^4.21.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.5.0",
-    "nodemailer": "^8.0.7"
-  },
-  "devDependencies": {
+    "nodemailer": "^8.0.7",
     "@types/amqplib": "^0.10.8",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
@@ -36,8 +34,10 @@
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.0.0",
     "@types/nodemailer": "^8.0.0",
-    "nodemon": "^3.1.11",
-    "ts-node": "^10.9.2",
     "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11",
+    "ts-node": "^10.9.2"
   }
 }
