@@ -16,6 +16,25 @@ export interface IUser extends Document {
   department: string;
   designation: string;  
   isActive: boolean;
+  avatar?: string;
+  bio?: string;
+  settings?: {
+    notifications: {
+      emailUpdates: boolean;
+      pushAlerts: boolean;
+      taskAssigned: boolean;
+      statusChanged: boolean;
+      deadlineAlerts: boolean;
+      weeklySummary: boolean;
+    };
+    preferences: {
+      themeColor: string;
+      density: string;
+      soundEffects: boolean;
+      sidebarExpanded: boolean;
+      animationsEnabled: boolean;
+    };
+  };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -107,6 +126,31 @@ const userSchema = new Schema<IUser>(
       type: Boolean,
       default: true,
     },
+    avatar: {
+      type: String,
+      default: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&q=80',
+    },
+    bio: {
+      type: String,
+      default: '',
+    },
+    settings: {
+      notifications: {
+        emailUpdates: { type: Boolean, default: true },
+        pushAlerts: { type: Boolean, default: false },
+        taskAssigned: { type: Boolean, default: true },
+        statusChanged: { type: Boolean, default: true },
+        deadlineAlerts: { type: Boolean, default: true },
+        weeklySummary: { type: Boolean, default: false }
+      },
+      preferences: {
+        themeColor: { type: String, default: 'amber' },
+        density: { type: String, default: 'cozy' },
+        soundEffects: { type: Boolean, default: true },
+        sidebarExpanded: { type: Boolean, default: true },
+        animationsEnabled: { type: Boolean, default: true }
+      }
+    }
   },
   {
     timestamps: true,

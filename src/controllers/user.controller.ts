@@ -3,6 +3,7 @@ import User from '../models/user.model';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
+import { AuthRequest } from '../middleware/auth.middleware';
 
 // In-memory store for OTPs (For production, use Redis or MongoDB)
 const otpStore = new Map<string, { otp: string, expiresAt: number }>();
@@ -501,6 +502,66 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     res.status(500).json({
       success: false,
       message: 'Error resetting password',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// @desc    Get current user profile
+// @route   GET /api/users/profile
+// @access  Private
+export const getCurrentProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const user = await User.findById(req.user?.id).select('-password');
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+    res.status(200).json({ success: true, data: user });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching profile',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// @desc    Update current user profile
+// @route   PUT /api/users/profile
+// @access  Private
+export const updateCurrentProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { firstName, lastName, contactNumber, avatar, bio, settings } = req.body;
+    
+    const updateData: any = {};
+    if (firstName) updateData.firstName = firstName;
+    if (lastName) updateData.lastName = lastName;
+    if (contactNumber) updateData.contactNumber = contactNumber;
+    if (avatar) updateData.avatar = avatar;
+    if (bio !== undefined) updateData.bio = bio;
+    if (settings) updateData.settings = settings;
+
+    const user = await User.findByIdAndUpdate(
+      req.user?.id,
+      { $set: updateData },
+      { new: true, runValidators: true }
+    ).select('-password');
+
+    if (!user) {
+      res.status(404).json({ success: false, message: 'User not found' });
+      return;
+    }
+
+    res.status(200).json({
+      success: true,
+      message: 'Profile updated successfully',
+      data: user,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating profile',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }

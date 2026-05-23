@@ -16,6 +16,7 @@ dotenv.config();
 
 const QUEUE_NAME = 'project_assigned_queue';
 const TASK_QUEUE_NAME = 'task_assigned_queue';
+const STATUS_UPDATE_QUEUE_NAME = 'task_status_updated_queue';
 
 // Dynamically create a transporter resolved to Gmail's IPv4 address to bypass Render's IPv6 limits
 const getTransporter = async () => {
@@ -92,6 +93,25 @@ const startWorker = async () => {
           console.log('✅ Task Email task processed and acknowledged.');
         } catch (error) {
           console.error('❌ Error processing task message:', error);
+        }
+      }
+    });
+
+    await channel.assertQueue(STATUS_UPDATE_QUEUE_NAME, { durable: true });
+    console.log(`📥 Waiting for messages in queue: ${STATUS_UPDATE_QUEUE_NAME}...`);
+
+    channel.consume(STATUS_UPDATE_QUEUE_NAME, async (msg) => {
+      if (msg !== null) {
+        try {
+          const data = JSON.parse(msg.content.toString());
+          console.log(`📨 Received task status update event for task: ${data.taskTitle}`);
+          
+          await processStatusUpdateEmailTask(data);
+          
+          channel.ack(msg);
+          console.log('✅ Task Status Update Email task processed and acknowledged.');
+        } catch (error) {
+          console.error('❌ Error processing status update message:', error);
         }
       }
     });
@@ -203,6 +223,55 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
     console.log(`✅ [Worker] SMTP delivery success! Task Email sent to ${user.email}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processTaskEmailTask:`, dbOrMailError);
+    throw dbOrMailError;
+  }
+};
+
+const processStatusUpdateEmailTask = async (data: {
+  taskId: string;
+  taskTitle: string;
+  oldStatus: string;
+  newStatus: string;
+  assigneeName: string;
+  creatorEmail: string;
+  creatorName: string;
+}) => {
+  const { taskTitle, oldStatus, newStatus, assigneeName, creatorEmail, creatorName } = data;
+  
+  console.log(`🔍 [Worker] Processing task status update email for "${taskTitle}" to ${creatorEmail}`);
+
+  try {
+    const mailOptions = {
+      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      to: creatorEmail,
+      subject: `Task Status Updated: ${taskTitle}`,
+      html: `
+        <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
+          <div style="max-width: 600px; margin: 0 auto; background: #ffffff; padding: 30px; border-radius: 8px;">
+            <h2 style="color: #333;">Hello ${creatorName},</h2>
+            <p style="font-size: 16px; color: #555;">A task that you assigned has been updated by <strong>${assigneeName}</strong>:</p>
+            
+            <div style="background-color: #eef2f5; padding: 20px; border-left: 4px solid #f39c12; margin: 20px 0; border-radius: 4px;">
+              <h3 style="margin: 0 0 10px; color: #2c3e50;">${taskTitle}</h3>
+              <p style="margin: 0; font-size: 15px; color: #555;">
+                Status changed from <strong style="color: #e74c3c;">${oldStatus}</strong> to <strong style="color: #27ae60;">${newStatus}</strong>.
+              </p>
+            </div>
+            
+            <p style="font-size: 16px; color: #555;">Please log in to your dashboard to review task progression.</p>
+            <a href="${process.env.FRONTEND_URL || 'http://localhost:4200'}" style="display: inline-block; padding: 10px 20px; background-color: #f39c12; color: #ffffff; text-decoration: none; border-radius: 4px; font-weight: bold; margin-top: 10px;">Go to Dashboard</a>
+            <p style="font-size: 14px; color: #999; margin-top: 30px;">Best regards,<br>TaskFlow Pro Team</p>
+          </div>
+        </div>
+      `,
+    };
+
+    console.log(`📧 [Worker] Dispatching status update SMTP request to ${creatorEmail}...`);
+    const currentTransporter = await getTransporter();
+    await currentTransporter.sendMail(mailOptions);
+    console.log(`✅ [Worker] SMTP delivery success! Status Update Email sent to ${creatorEmail}`);
+  } catch (dbOrMailError) {
+    console.error(`❌ [Worker] Failure inside processStatusUpdateEmailTask:`, dbOrMailError);
     throw dbOrMailError;
   }
 };

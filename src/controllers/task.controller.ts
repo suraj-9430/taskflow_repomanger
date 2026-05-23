@@ -99,6 +99,15 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
 // ─────────────────────────────────────────────
 export const updateTask = async (req: Request, res: Response): Promise<void> => {
   try {
+    const existingTask = await Task.findById(req.params.id);
+    if (!existingTask) {
+      res.status(404).json({ success: false, message: 'Task not found' });
+      return;
+    }
+
+    const isStatusChanged = req.body.status && existingTask.status !== req.body.status;
+    const oldStatus = existingTask.status;
+
     const updated = await Task.findByIdAndUpdate(
       req.params.id,
       { ...req.body },
@@ -119,6 +128,23 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
         taskTitle: updated.title,
         assigneeId: req.body.assignedTo,
         projectId: updated.projectId,
+      });
+    }
+
+    // Notify assigner if task status is updated
+    if (isStatusChanged && updated.createdBy) {
+      const assigneeName = updated.assignedTo
+        ? `${(updated.assignedTo as any).firstName} ${(updated.assignedTo as any).lastName}`
+        : 'An employee';
+
+      await publishToQueue('task_status_updated_queue', {
+        taskId: updated._id,
+        taskTitle: updated.title,
+        oldStatus,
+        newStatus: updated.status,
+        assigneeName,
+        creatorEmail: (updated.createdBy as any).email,
+        creatorName: (updated.createdBy as any).firstName,
       });
     }
 

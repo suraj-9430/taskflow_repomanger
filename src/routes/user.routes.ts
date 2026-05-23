@@ -12,7 +12,10 @@ import {
   forgotPassword,
   resetPassword,
   updateUser,
+  getCurrentProfile,
+  updateCurrentProfile,
 } from '../controllers/user.controller';
+import { protect } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -24,6 +27,10 @@ router.get('/countactiveusers', countactiveuser);
 
 // GET /api/users/employees - Get employees only (role=employee)
 router.get('/employees', getEmployees);
+
+// Profile routes (private)
+router.get('/profile', protect, getCurrentProfile);
+router.put('/profile', protect, updateCurrentProfile);
 
 
 // // GET /api/users/:id - Get user by ID
