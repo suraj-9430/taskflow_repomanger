@@ -1,6 +1,8 @@
 import { Request, Response } from 'express';
 import Task from '../models/task.model';
 import { publishToQueue } from '../utils/rabbitmq';
+import TaskComment from '../models/taskComment.model';
+import Notification from '../models/notification.model';
 
 // ─────────────────────────────────────────────
 // GET /api/tasks  — fetch all tasks
@@ -167,5 +169,69 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
     res.status(200).json({ success: true, message: 'Task deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to delete task', error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET /api/tasks/:id/comments
+// ─────────────────────────────────────────────
+export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const comments = await TaskComment.find({ taskId: id })
+      .populate('senderId', 'firstName lastName email designation avatar role')
+      .sort({ createdAt: 1 });
+    res.status(200).json({ success: true, data: comments });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to fetch comments', error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// POST /api/tasks/:id/comments
+// ─────────────────────────────────────────────
+export const createTaskComment = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const { senderId, content } = req.body;
+
+    if (!senderId || !content) {
+      res.status(400).json({ success: false, message: 'senderId and content are required' });
+      return;
+    }
+
+    const comment = new TaskComment({
+      taskId: id,
+      senderId,
+      content,
+    });
+
+    await comment.save();
+
+    const populated = await TaskComment.findById(comment._id)
+      .populate('senderId', 'firstName lastName email designation avatar role');
+
+    // Automatically trigger notification for the other active user on the task
+    const task = await Task.findById(id);
+    if (task) {
+      const otherUserId = String(task.assignedTo) === String(senderId) ? task.createdBy : task.assignedTo;
+      if (otherUserId && String(otherUserId) !== String(senderId)) {
+        const senderName = populated && populated.senderId
+          ? `${(populated.senderId as any).firstName} ${(populated.senderId as any).lastName}`
+          : 'Someone';
+
+        await Notification.create({
+          userId: otherUserId,
+          title: `New comment on: ${task.title}`,
+          message: `${senderName} commented: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`,
+          type: 'task',
+          isRead: false,
+        });
+      }
+    }
+
+    res.status(201).json({ success: true, data: populated });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to create comment', error: error.message });
   }
 };
