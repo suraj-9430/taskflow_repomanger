@@ -9,6 +9,7 @@ import forwardContractRoutes from './routes/forwardContract.routes';
 import projectRoutes from './routes/project.routes';
 import taskRoutes from './routes/task.routes';
 import notificationRoutes from './routes/notification.routes';
+import attendanceRoutes from './routes/attendance.routes';
 
 const app: Application = express();
 
@@ -66,6 +67,7 @@ app.use('/api/forward-contracts', forwardContractRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/notifications', notificationRoutes);
+app.use('/api/attendance', attendanceRoutes);
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {
