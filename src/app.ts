@@ -10,6 +10,7 @@ import projectRoutes from './routes/project.routes';
 import taskRoutes from './routes/task.routes';
 import notificationRoutes from './routes/notification.routes';
 import attendanceRoutes from './routes/attendance.routes';
+import aiRoutes from './routes/ai.routes';
 
 const app: Application = express();
 
@@ -18,7 +19,12 @@ const app: Application = express();
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:4200',
-  'http://localhost:5173'
+  'http://localhost:5173',
+  // Capacitor Android & iOS origins
+  'capacitor://localhost',
+  'ionic://localhost',
+  'http://localhost',
+  // LAN access for mobile testing
 ];
 
 if (config.corsOrigin) {
@@ -27,10 +33,14 @@ if (config.corsOrigin) {
   allowedOrigins.push(...origins);
 }
 
+
 app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
+
+    // In development, allow ALL origins (Capacitor WebView origins vary)
+    if (config.nodeEnv === 'development') return callback(null, true);
     
     // Normalize both incoming origin and allowed origins to strip trailing slash
     const cleanOrigin = origin.endsWith('/') ? origin.slice(0, -1) : origin;
@@ -68,6 +78,7 @@ app.use('/api/projects', projectRoutes);
 app.use('/api/tasks', taskRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/attendance', attendanceRoutes);
+app.use('/api/ai', aiRoutes);
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {
