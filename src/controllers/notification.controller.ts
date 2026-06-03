@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Notification from '../models/notification.model';
+import { emitToUser } from '../utils/socket';
 
 // @desc    Get user notifications
 // @route   GET /api/notifications
@@ -95,6 +96,9 @@ export const createNotification = async (req: AuthRequest, res: Response): Promi
       type: type || 'system',
       isRead: false,
     });
+
+    // Emit real-time event
+    emitToUser(userId, 'new_notification', notification);
 
     res.status(201).json({
       success: true,

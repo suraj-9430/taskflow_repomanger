@@ -11,6 +11,7 @@ import taskRoutes from './routes/task.routes';
 import notificationRoutes from './routes/notification.routes';
 import attendanceRoutes from './routes/attendance.routes';
 import aiRoutes from './routes/ai.routes';
+import leaveRoutes from './routes/leave.routes';
 
 const app: Application = express();
 
@@ -79,6 +80,7 @@ app.use('/api/tasks', taskRoutes);
 app.use('/api/notifications', notificationRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/ai', aiRoutes);
+app.use('/api/leaves', leaveRoutes);
 
 // 404 Handler
 app.use((_req: Request, res: Response) => {

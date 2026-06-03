@@ -18,6 +18,11 @@ export interface IUser extends Document {
   isActive: boolean;
   avatar?: string;
   bio?: string;
+  leaveBalance: {
+    sick: number;
+    casual: number;
+    earned: number;
+  };
   settings?: {
     notifications: {
       emailUpdates: boolean;
@@ -133,6 +138,11 @@ const userSchema = new Schema<IUser>(
     bio: {
       type: String,
       default: '',
+    },
+    leaveBalance: {
+      sick: { type: Number, default: 10 },
+      casual: { type: Number, default: 10 },
+      earned: { type: Number, default: 10 },
     },
     settings: {
       notifications: {

@@ -3,6 +3,7 @@ import Task from '../models/task.model';
 import { publishToQueue } from '../utils/rabbitmq';
 import TaskComment from '../models/taskComment.model';
 import Notification from '../models/notification.model';
+import { getIO } from '../utils/socket';
 
 // ─────────────────────────────────────────────
 // GET /api/tasks  — fetch all tasks
@@ -228,6 +229,15 @@ export const createTaskComment = async (req: Request, res: Response): Promise<vo
           isRead: false,
         });
       }
+    }
+
+    // Emit Socket.IO event to all clients in the task's room
+    try {
+      const io = getIO();
+      io.to(`task_${id}`).emit('new_comment', populated);
+      console.log(`📡 Broadcasted new comment to room: task_${id}`);
+    } catch (err: any) {
+      console.warn('Socket emit warning (Socket may not be initialized yet):', err.message);
     }
 
     res.status(201).json({ success: true, data: populated });

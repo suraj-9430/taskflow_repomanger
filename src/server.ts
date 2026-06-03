@@ -2,13 +2,22 @@ import app from './app';
 import connectDB from './config/database';
 import { config } from './config';
 
+import http from 'http';
+import { initSocket } from './utils/socket';
+
 const startServer = async (): Promise<void> => {
   try {
     // Connect to MongoDB
     await connectDB();
     
+    // Create HTTP server
+    const server = http.createServer(app);
+    
+    // Initialize Socket.io
+    initSocket(server);
+    
     // Start the server
-    app.listen(config.port, () => {
+    server.listen(config.port, () => {
       console.log(`Server running in ${config.nodeEnv} mode on port ${config.port}`);
       console.log(`Health check: http://localhost:${config.port}`);
     });
