@@ -4,13 +4,60 @@ import { publishToQueue } from '../utils/rabbitmq';
 import TaskComment from '../models/taskComment.model';
 import Notification from '../models/notification.model';
 import { getIO } from '../utils/socket';
+import mongoose from 'mongoose';
 
 // ─────────────────────────────────────────────
 // GET /api/tasks  — fetch all tasks
 // ─────────────────────────────────────────────
-export const getAllTasks = async (_req: Request, res: Response): Promise<void> => {
+export const getAllTasks = async (req: Request, res: Response): Promise<void> => {
   try {
-    const tasks = await Task.find()
+    const {
+      search,
+      status,
+      projectId,
+      assignedTo,
+      priority,
+      dueFrom,
+      dueTo,
+    } = req.query;
+
+    const query: any = {};
+
+    if (search && typeof search === 'string') {
+      query.$or = [
+        { title: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { taskId: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    if (status && typeof status === 'string' && status !== 'all') {
+      query.status = status;
+    }
+
+    if (priority && typeof priority === 'string' && priority !== 'all') {
+      query.priority = priority;
+    }
+
+    if (projectId && typeof projectId === 'string' && projectId !== 'all' && mongoose.Types.ObjectId.isValid(projectId)) {
+      query.projectId = projectId;
+    }
+
+    if (assignedTo && typeof assignedTo === 'string' && assignedTo !== 'all' && mongoose.Types.ObjectId.isValid(assignedTo)) {
+      query.assignedTo = assignedTo;
+    }
+
+    if (dueFrom || dueTo) {
+      query.dueDate = {};
+      if (dueFrom && typeof dueFrom === 'string') {
+        query.dueDate.$gte = new Date(dueFrom);
+      }
+      if (dueTo && typeof dueTo === 'string') {
+        query.dueDate.$lte = new Date(dueTo);
+      }
+    }
+
+    const tasks = await Task.find(query)
       .populate('projectId', 'projectName')
       .populate('assignedTo', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email')
@@ -19,6 +66,76 @@ export const getAllTasks = async (_req: Request, res: Response): Promise<void> =
     res.status(200).json({ success: true, data: tasks });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch tasks', error: error.message });
+  }
+};
+
+export const bulkUpdateTasks = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { taskIds, updates } = req.body;
+
+    if (!Array.isArray(taskIds) || taskIds.length === 0 || !updates || typeof updates !== 'object') {
+      res.status(400).json({ success: false, message: 'taskIds and updates are required' });
+      return;
+    }
+
+    const allowedUpdates = ['status', 'priority', 'assignedTo', 'projectId', 'dueDate'];
+    const sanitizedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([key, value]) => allowedUpdates.includes(key) && value !== undefined && value !== '')
+    );
+
+    if (Object.keys(sanitizedUpdates).length === 0) {
+      res.status(400).json({ success: false, message: 'No valid bulk update fields were provided' });
+      return;
+    }
+
+    await Task.updateMany({ _id: { $in: taskIds } }, { $set: sanitizedUpdates }, { runValidators: true });
+
+    const tasks = await Task.find({ _id: { $in: taskIds } })
+      .populate('projectId', 'projectName')
+      .populate('assignedTo', 'firstName lastName email designation')
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ updatedAt: -1 });
+
+    if (sanitizedUpdates.assignedTo) {
+      await Promise.all(
+        tasks.map((task) =>
+          publishToQueue('task_assigned_queue', {
+            taskId: task._id,
+            taskTitle: task.title,
+            assigneeId: sanitizedUpdates.assignedTo,
+            projectId: task.projectId,
+          })
+        )
+      );
+    }
+
+    res.status(200).json({
+      success: true,
+      message: `${tasks.length} tasks updated successfully`,
+      data: tasks,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to bulk update tasks', error: error.message });
+  }
+};
+
+export const bulkDeleteTasks = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { taskIds } = req.body;
+
+    if (!Array.isArray(taskIds) || taskIds.length === 0) {
+      res.status(400).json({ success: false, message: 'taskIds are required' });
+      return;
+    }
+
+    const result = await Task.deleteMany({ _id: { $in: taskIds } });
+
+    res.status(200).json({
+      success: true,
+      message: `${result.deletedCount || 0} tasks deleted successfully`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to bulk delete tasks', error: error.message });
   }
 };
 

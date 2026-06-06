@@ -1,13 +1,47 @@
 import { Request, Response } from 'express';
 import Project from '../models/project.model';
 import { publishToQueue } from '../utils/rabbitmq';
+import mongoose from 'mongoose';
 
 // ─────────────────────────────────────────────
 // GET /api/projects  — fetch all with assignee names
 // ─────────────────────────────────────────────
-export const getAllProjects = async (_req: Request, res: Response): Promise<void> => {
+export const getAllProjects = async (req: Request, res: Response): Promise<void> => {
   try {
-    const projects = await Project.find()
+    const { search, status, priority, assigneeId, deadlineFrom, deadlineTo } = req.query;
+    const query: any = {};
+
+    if (search && typeof search === 'string') {
+      query.$or = [
+        { projectName: { $regex: search, $options: 'i' } },
+        { description: { $regex: search, $options: 'i' } },
+        { projectId: { $regex: search, $options: 'i' } },
+      ];
+    }
+
+    if (status && typeof status === 'string' && status !== 'all') {
+      query.status = status;
+    }
+
+    if (priority && typeof priority === 'string' && priority !== 'all') {
+      query.priority = priority;
+    }
+
+    if (assigneeId && typeof assigneeId === 'string' && assigneeId !== 'all' && mongoose.Types.ObjectId.isValid(assigneeId)) {
+      query.assignees = assigneeId;
+    }
+
+    if (deadlineFrom || deadlineTo) {
+      query.deadline = {};
+      if (deadlineFrom && typeof deadlineFrom === 'string') {
+        query.deadline.$gte = new Date(deadlineFrom);
+      }
+      if (deadlineTo && typeof deadlineTo === 'string') {
+        query.deadline.$lte = new Date(deadlineTo);
+      }
+    }
+
+    const projects = await Project.find(query)
       .populate('assignees', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email')
       .sort({ createdAt: -1 });
@@ -15,6 +49,62 @@ export const getAllProjects = async (_req: Request, res: Response): Promise<void
     res.status(200).json({ success: true, data: projects });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch projects', error: error.message });
+  }
+};
+
+export const bulkUpdateProjects = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { projectIds, updates } = req.body;
+
+    if (!Array.isArray(projectIds) || projectIds.length === 0 || !updates || typeof updates !== 'object') {
+      res.status(400).json({ success: false, message: 'projectIds and updates are required' });
+      return;
+    }
+
+    const allowedUpdates = ['status', 'priority', 'deadline', 'progress'];
+    const sanitizedUpdates = Object.fromEntries(
+      Object.entries(updates).filter(([key, value]) => allowedUpdates.includes(key) && value !== undefined && value !== '')
+    );
+
+    if (Object.keys(sanitizedUpdates).length === 0) {
+      res.status(400).json({ success: false, message: 'No valid bulk update fields were provided' });
+      return;
+    }
+
+    await Project.updateMany({ _id: { $in: projectIds } }, { $set: sanitizedUpdates }, { runValidators: true });
+
+    const projects = await Project.find({ _id: { $in: projectIds } })
+      .populate('assignees', 'firstName lastName email designation')
+      .populate('createdBy', 'firstName lastName email')
+      .sort({ updatedAt: -1 });
+
+    res.status(200).json({
+      success: true,
+      message: `${projects.length} projects updated successfully`,
+      data: projects,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to bulk update projects', error: error.message });
+  }
+};
+
+export const bulkDeleteProjects = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { projectIds } = req.body;
+
+    if (!Array.isArray(projectIds) || projectIds.length === 0) {
+      res.status(400).json({ success: false, message: 'projectIds are required' });
+      return;
+    }
+
+    const result = await Project.deleteMany({ _id: { $in: projectIds } });
+
+    res.status(200).json({
+      success: true,
+      message: `${result.deletedCount || 0} projects deleted successfully`,
+    });
+  } catch (error: any) {
+    res.status(500).json({ success: false, message: 'Failed to bulk delete projects', error: error.message });
   }
 };
 

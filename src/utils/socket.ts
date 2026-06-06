@@ -83,6 +83,16 @@ export const initSocket = (server: HttpServer) => {
       console.log(`📡 User ${userId} left room task_${taskId}`);
     });
 
+    socket.on('join_project', (projectId: string) => {
+      socket.join(`project_${projectId}`);
+      console.log(`📡 User ${userId} joined room project_${projectId}`);
+    });
+
+    socket.on('leave_project', (projectId: string) => {
+      socket.leave(`project_${projectId}`);
+      console.log(`📡 User ${userId} left room project_${projectId}`);
+    });
+
     socket.on('disconnect', () => {
       console.log(`🔌 Socket disconnected: ${socket.id} (User: ${userId})`);
       const userSocketSet = userSockets.get(userId);
