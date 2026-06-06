@@ -21,13 +21,13 @@ import { authLimiter } from '../middleware/rateLimiter';
 const router = Router();
 
 // GET /api/users - Get all users
-router.get('/', getAllUsers);
-router.get('/fetchuserlimit', fetchuserlimit);
-router.get('/countuserbyrole', countuserbyrole);
-router.get('/countactiveusers', countactiveuser);
+router.get('/', protect, getAllUsers);
+router.get('/fetchuserlimit', protect, fetchuserlimit);
+router.get('/countuserbyrole', protect, countuserbyrole);
+router.get('/countactiveusers', protect, countactiveuser);
 
 // GET /api/users/employees - Get employees only (role=employee)
-router.get('/employees', getEmployees);
+router.get('/employees', protect, getEmployees);
 
 // Profile routes (private)
 router.get('/profile', protect, getCurrentProfile);
@@ -35,10 +35,10 @@ router.put('/profile', protect, updateCurrentProfile);
 
 
 // // GET /api/users/:id - Get user by ID
-router.get('/:id', getUserById);
+router.get('/:id', protect, getUserById);
 
 // // POST /api/users - Create new user
-router.post('/', createUser);
+router.post('/', protect, createUser);
 
 // POST /api/users/login - Login user
 router.post('/login', authLimiter, loginUser);
@@ -53,7 +53,7 @@ router.post('/forgot-password', authLimiter, forgotPassword);
 router.post('/reset-password', authLimiter, resetPassword);
 
 // PUT /api/users/:id - Update user
-router.put('/:id', updateUser);
+router.put('/:id', protect, updateUser);
 
 // // DELETE /api/users/:id - Delete user
 // router.delete('/:id', deleteUser);
