@@ -38,10 +38,12 @@ export interface IUser extends Document {
       soundEffects: boolean;
       sidebarExpanded: boolean;
       animationsEnabled: boolean;
+      darkMode: boolean;
     };
   };
   createdAt: Date;
   updatedAt: Date;
+  refreshToken?: string;
 }
 
 const userSchema = new Schema<IUser>(
@@ -158,8 +160,13 @@ const userSchema = new Schema<IUser>(
         density: { type: String, default: 'cozy' },
         soundEffects: { type: Boolean, default: true },
         sidebarExpanded: { type: Boolean, default: true },
-        animationsEnabled: { type: Boolean, default: true }
+        animationsEnabled: { type: Boolean, default: true },
+        darkMode: { type: Boolean, default: true }
       }
+    },
+    refreshToken: {
+      type: String,
+      select: false,
     }
   },
   {
