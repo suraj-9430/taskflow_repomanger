@@ -267,6 +267,24 @@ export const fetchuserlimit = async (req: Request, res: Response) => {
   }
 }
 
+const generateAccessToken = (userId: string, role: string): string => {
+  const jwtSecret = process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+  return jwt.sign(
+    { user: { id: userId, role } },
+    jwtSecret,
+    { expiresIn: '15m' }
+  );
+};
+
+const generateRefreshToken = (userId: string, role: string): string => {
+  const refreshSecret = process.env.REFRESH_SECRET || process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+  return jwt.sign(
+    { user: { id: userId, role } },
+    refreshSecret,
+    { expiresIn: '7d' }
+  );
+};
+
 // @desc    Login user
 // @route   POST /api/users/login
 // @access  Public
@@ -310,45 +328,42 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
-    // Sign JWT
-    const payload = {
+    // Sign Tokens
+    const accessToken = generateAccessToken(user._id.toString(), user.role);
+    const refreshToken = generateRefreshToken(user._id.toString(), user.role);
+
+    // Save refresh token to DB
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    // Set refresh token in HttpOnly cookie
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    // Set access token in HttpOnly cookie for fallback
+    res.cookie('token', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 15 * 60 * 1000, // 15 mins
+    });
+
+    res.status(200).json({
+      success: true,
+      message: 'Login successful',
+      token: accessToken,
       user: {
         id: user._id,
+        email: user.email,
+        firstName: user.firstName,
+        lastName: user.lastName,
         role: user.role,
-      },
-    };
-
-    const jwtSecret = process.env.JWT_SECRET || 'fallback_secret_key_change_me';
-    
-    jwt.sign(
-      payload,
-      jwtSecret,
-      { expiresIn: '1d' },
-      (err, token) => {
-        if (err) throw err;
-        
-        // Set cookie
-        res.cookie('token', token, {
-          httpOnly: true,
-          secure: process.env.NODE_ENV === 'production',
-          sameSite: 'strict',
-          maxAge: 24 * 60 * 60 * 1000, // 1 day
-        });
-
-        res.status(200).json({
-          success: true,
-          message: 'Login successful',
-          token,
-          user: {
-            id: user._id,
-            email: user.email,
-            firstName: user.firstName,
-            lastName: user.lastName,
-            role: user.role,
-          }
-        });
       }
-    );
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -358,13 +373,106 @@ export const loginUser = async (req: Request, res: Response): Promise<void> => {
   }
 };
 
+// @desc    Refresh access token
+// @route   POST /api/users/refresh-token
+// @access  Public
+export const refreshUserToken = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+
+    if (!refreshToken) {
+      res.status(401).json({
+        success: false,
+        message: 'No refresh token provided',
+      });
+      return;
+    }
+
+    const refreshSecret = process.env.REFRESH_SECRET || process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+    let decoded: any;
+    try {
+      decoded = jwt.verify(refreshToken, refreshSecret);
+    } catch (err) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid or expired refresh token',
+      });
+      return;
+    }
+
+    const user = await User.findById(decoded.user.id).select('+refreshToken');
+    if (!user || user.refreshToken !== refreshToken) {
+      res.status(401).json({
+        success: false,
+        message: 'Invalid refresh token mapping or user not found',
+      });
+      return;
+    }
+
+    // Generate new tokens
+    const newAccessToken = generateAccessToken(user._id.toString(), user.role);
+    const newRefreshToken = generateRefreshToken(user._id.toString(), user.role);
+
+    // Save rotated refresh token
+    user.refreshToken = newRefreshToken;
+    await user.save();
+
+    // Set cookie
+    res.cookie('refreshToken', newRefreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+
+    res.cookie('token', newAccessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 15 * 60 * 1000,
+    });
+
+    res.status(200).json({
+      success: true,
+      token: newAccessToken,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Server error during token refresh',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
 // @desc    Logout user
 // @route   POST /api/users/logout
 // @access  Public
-export const logoutUser = async (_req: Request, res: Response): Promise<void> => {
-  res.cookie('token', 'none', {
-    expires: new Date(Date.now() + 10 * 1000),
+export const logoutUser = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    if (refreshToken) {
+      const refreshSecret = process.env.REFRESH_SECRET || process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+      try {
+        const decoded = jwt.verify(refreshToken, refreshSecret) as any;
+        await User.findByIdAndUpdate(decoded.user.id, { $unset: { refreshToken: 1 } });
+      } catch (e) {
+        // Ignore token verify error
+      }
+    }
+  } catch (error) {
+    // Ignore db error
+  }
+
+  res.clearCookie('refreshToken', {
     httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
+  });
+  res.clearCookie('token', {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax',
   });
 
   res.status(200).json({
