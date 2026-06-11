@@ -9,6 +9,7 @@ import {
   getUserById,
   loginUser,
   logoutUser,
+  refreshUserToken,
   forgotPassword,
   resetPassword,
   updateUser,
@@ -42,6 +43,9 @@ router.post('/', protect, createUser);
 
 // POST /api/users/login - Login user
 router.post('/login', authLimiter, loginUser);
+
+// POST /api/users/refresh-token - Refresh token
+router.post('/refresh-token', refreshUserToken);
 
 // POST /api/users/logout - Logout user
 router.post('/logout', logoutUser);
