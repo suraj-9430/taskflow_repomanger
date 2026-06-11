@@ -1,6 +1,7 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
 import Attendance from '../models/attendance.model';
+import SystemConfig from '../models/systemConfig.model';
 
 // @desc    Log a check-in event (Office or Remote)
 // @route   POST /api/attendance/clock-in
@@ -218,6 +219,58 @@ export const rejectAttendance = async (req: AuthRequest, res: Response): Promise
     res.status(500).json({
       success: false,
       message: 'Error rejecting attendance record',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// @desc    Get Office Coordinates config
+// @route   GET /api/attendance/office-coords
+// @access  Private
+export const getOfficeCoords = async (_req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const config = await SystemConfig.findOne({ key: 'office_coords' });
+    if (!config) {
+      res.status(200).json({ success: true, lat: 17.443500, lng: 78.385000 });
+      return;
+    }
+    res.status(200).json({ success: true, ...config.value });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching office coordinates',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
+// @desc    Update Office Coordinates config
+// @route   PUT /api/attendance/office-coords
+// @access  Private/Admin
+export const updateOfficeCoords = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { lat, lng } = req.body;
+    if (lat === undefined || lng === undefined) {
+      res.status(400).json({ success: false, message: 'Latitude and Longitude are required' });
+      return;
+    }
+
+    await SystemConfig.findOneAndUpdate(
+      { key: 'office_coords' },
+      { value: { lat: Number(lat), lng: Number(lng) } },
+      { upsert: true, new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'Office coordinates updated successfully',
+      lat: Number(lat),
+      lng: Number(lng),
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Error updating office coordinates',
       error: error instanceof Error ? error.message : 'Unknown error',
     });
   }
