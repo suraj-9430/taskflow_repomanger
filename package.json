@@ -25,7 +25,6 @@
     "@types/jest": "^30.0.0",
     "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^22.0.0",
-    "@types/nodemailer": "^8.0.0",
     "amqplib": "^2.0.1",
     "bcryptjs": "^3.0.3",
     "cookie-parser": "^1.4.7",
@@ -35,7 +34,7 @@
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.5.0",
-    "nodemailer": "^8.0.7",
+    "resend": "^6.12.4",
     "socket.io": "^4.8.3",
     "typescript": "^6.0.3"
   },

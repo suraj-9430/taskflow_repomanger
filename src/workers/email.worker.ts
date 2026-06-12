@@ -1,51 +1,20 @@
 import amqp from 'amqplib';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
-import dns from 'dns';
-import { promisify } from 'util';
 import User from '../models/user.model';
 import Project from '../models/project.model';
 
-const lookupPromise = promisify(dns.lookup);
-
-// Force Node.js to resolve DNS hostnames to IPv4 first (resolves Render's IPv6 ENETUNREACH issues)
-dns.setDefaultResultOrder('ipv4first');
-
 dotenv.config();
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
 const QUEUE_NAME = 'project_assigned_queue';
 const TASK_QUEUE_NAME = 'task_assigned_queue';
 const STATUS_UPDATE_QUEUE_NAME = 'task_status_updated_queue';
 
-// Dynamically create a transporter resolved to Gmail's IPv4 address to bypass Render's IPv6 limits
-const getTransporter = async () => {
-  let resolvedHost = 'smtp.gmail.com';
-  try {
-    const result = await lookupPromise('smtp.gmail.com', { family: 4 });
-    resolvedHost = result.address;
-    console.log(`🌐 [Worker] Dynamically resolved smtp.gmail.com to IPv4: ${resolvedHost}`);
-  } catch (err) {
-    console.warn(`⚠️ [Worker] DNS lookup failed for smtp.gmail.com, falling back to hostname:`, err);
-  }
 
-  return nodemailer.createTransport({
-    host: resolvedHost,
-    port: 587,
-    secure: false, // Use STARTTLS
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-      servername: 'smtp.gmail.com', // CRITICAL: Forces certificate validation to match Gmail domain
-      rejectUnauthorized: false
-    },
-    connectionTimeout: 10000, // Time out after 10 seconds instead of hanging forever
-    greetingTimeout: 10000,
-    socketTimeout: 10000
-  } as any);
-};
 
 const startWorker = async () => {
   try {
@@ -142,9 +111,9 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
     }
     
     for (const user of users) {
-      console.log(`📧 [Worker] Preparing to send email to ${user.email} (SMTP User: ${process.env.EMAIL_USER})...`);
+      console.log(`📧 [Worker] Preparing to send email to ${user.email}...`);
       const mailOptions = {
-        from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+        from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
         to: user.email,
         subject: `New Project Assignment: ${projectName}`,
         html: `
@@ -163,10 +132,12 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
         `,
       };
 
-      console.log(`📧 [Worker] Dispatching SMTP request via Nodemailer to ${user.email}...`);
-      const currentTransporter = await getTransporter();
-      await currentTransporter.sendMail(mailOptions);
-      console.log(`✅ [Worker] SMTP delivery success! Email sent to ${user.email}`);
+      console.log(`📧 [Worker] Dispatching request via Resend API to ${user.email}...`);
+      const response = await resend.emails.send(mailOptions);
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
+      console.log(`✅ [Worker] Resend delivery success! Email sent to ${user.email}`);
     }
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processProjectEmailTask:`, dbOrMailError);
@@ -198,7 +169,7 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
 
     console.log(`📧 [Worker] Preparing to send task email to ${user.email}...`);
     const mailOptions = {
-      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
       to: user.email,
       subject: `New Task Assigned: ${taskTitle}`,
       html: `
@@ -217,10 +188,12 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
       `,
     };
 
-    console.log(`📧 [Worker] Dispatching task SMTP request to ${user.email}...`);
-    const currentTransporter = await getTransporter();
-    await currentTransporter.sendMail(mailOptions);
-    console.log(`✅ [Worker] SMTP delivery success! Task Email sent to ${user.email}`);
+    console.log(`📧 [Worker] Dispatching task request via Resend API to ${user.email}...`);
+    const response = await resend.emails.send(mailOptions);
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    console.log(`✅ [Worker] Resend delivery success! Task Email sent to ${user.email}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processTaskEmailTask:`, dbOrMailError);
     throw dbOrMailError;
@@ -242,7 +215,7 @@ const processStatusUpdateEmailTask = async (data: {
 
   try {
     const mailOptions = {
-      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
       to: creatorEmail,
       subject: `Task Status Updated: ${taskTitle}`,
       html: `
@@ -266,10 +239,12 @@ const processStatusUpdateEmailTask = async (data: {
       `,
     };
 
-    console.log(`📧 [Worker] Dispatching status update SMTP request to ${creatorEmail}...`);
-    const currentTransporter = await getTransporter();
-    await currentTransporter.sendMail(mailOptions);
-    console.log(`✅ [Worker] SMTP delivery success! Status Update Email sent to ${creatorEmail}`);
+    console.log(`📧 [Worker] Dispatching status update request via Resend API to ${creatorEmail}...`);
+    const response = await resend.emails.send(mailOptions);
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
+    console.log(`✅ [Worker] Resend delivery success! Status Update Email sent to ${creatorEmail}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processStatusUpdateEmailTask:`, dbOrMailError);
     throw dbOrMailError;

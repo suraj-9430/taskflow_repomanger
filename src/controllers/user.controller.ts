@@ -2,8 +2,11 @@ import { Request, Response } from 'express';
 import User from '../models/user.model';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import { AuthRequest } from '../middleware/auth.middleware';
+
+const resend = new Resend(process.env.RESEND_API_KEY);
+const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
 // In-memory store for OTPs (For production, use Redis or MongoDB)
 const otpStore = new Map<string, { otp: string, expiresAt: number }>();
@@ -508,17 +511,9 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       expiresAt: Date.now() + 10 * 60 * 1000 // 10 mins
     });
 
-    // Send email using Nodemailer
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
-
+    // Send email using Resend
     const mailOptions = {
-      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
       to: email,
       subject: 'Your Password Reset OTP',
       html: `
@@ -536,7 +531,10 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       `,
     };
 
-    await transporter.sendMail(mailOptions);
+    const response = await resend.emails.send(mailOptions);
+    if (response.error) {
+      throw new Error(response.error.message);
+    }
 
     console.log(`\n\n========================================`);
     console.log(`✉️  EMAIL SENT WITH OTP FOR ${email}: ${otp}`);
