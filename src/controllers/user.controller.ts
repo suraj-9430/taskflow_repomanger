@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 import { Resend } from 'resend';
 import { AuthRequest } from '../middleware/auth.middleware';
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
 // In-memory store for OTPs (For production, use Redis or MongoDB)
