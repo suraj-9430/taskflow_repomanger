@@ -20,6 +20,8 @@ export const protect = (
   try {
     let token: string | undefined;
 
+    console.log('Protect Middleware - Cookies:', req.cookies, 'Auth Header:', req.headers.authorization);
+
     // 1️⃣  Check Authorization: Bearer <token>
     const authHeader = req.headers.authorization;
     if (authHeader && authHeader.startsWith('Bearer ')) {

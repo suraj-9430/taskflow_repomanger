@@ -230,11 +230,15 @@ export const rejectAttendance = async (req: AuthRequest, res: Response): Promise
 export const getOfficeCoords = async (_req: AuthRequest, res: Response): Promise<void> => {
   try {
     const config = await SystemConfig.findOne({ key: 'office_coords' });
-    if (!config) {
+    if (!config || !config.value) {
       res.status(200).json({ success: true, lat: 17.443500, lng: 78.385000 });
       return;
     }
-    res.status(200).json({ success: true, ...config.value });
+    res.status(200).json({
+      success: true,
+      lat: config.value.lat !== undefined ? Number(config.value.lat) : 17.443500,
+      lng: config.value.lng !== undefined ? Number(config.value.lng) : 78.385000,
+    });
   } catch (error) {
     res.status(500).json({
       success: false,
