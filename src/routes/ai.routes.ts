@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { chatWithAI, breakdownTask } from '../controllers/ai.controller';
+import { chatWithAI, breakdownTask, generateDailyPlan } from '../controllers/ai.controller';
 import { protect } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -12,5 +12,8 @@ router.post('/chat', chatWithAI);
 
 // POST /api/ai/breakdown — Generate task subtask checklist
 router.post('/breakdown', breakdownTask);
+
+// POST /api/ai/daily-plan — Generate manager's daily plan
+router.post('/daily-plan', generateDailyPlan);
 
 export default router;

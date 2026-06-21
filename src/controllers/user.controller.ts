@@ -56,8 +56,6 @@ export const getEmployees = async (_req: Request, res: Response) => {
 export const countuserbyrole = async (req: Request, res: Response) => {
   try {
     const role = req.query.role as string;
-     
-    console.log('Role received in query:', role);
     
     const count = await User.countDocuments({ role });
     res.status(200).json({
@@ -78,8 +76,6 @@ export const countuserbyrole = async (req: Request, res: Response) => {
 export const countactiveuser = async (req: Request, res: Response) => {
   try {
     const empStatus = req.query.empStatus as string;
-     
-    console.log('Role received in query:', empStatus);
     
     const count = await User.countDocuments({ empStatus });
     res.status(200).json({

@@ -173,3 +173,59 @@ Rules:
     });
   }
 };
+
+// ─────────────────────────────────────────────
+// POST /api/ai/daily-plan  — Generate manager's daily plan
+// ─────────────────────────────────────────────
+export const generateDailyPlan = async (req: AuthRequest, res: Response): Promise<void> => {
+  try {
+    const { projects, tasks } = req.body;
+
+    const prompt = `You are a manager's AI co-pilot. Based on the active projects and recent tasks provided, generate a list of 4-6 specific daily action items for the manager.
+
+Active Projects: ${JSON.stringify(projects?.map((p: any) => p.projectName || p.name) || [])}
+Recent Tasks: ${JSON.stringify(tasks?.map((t: any) => ({ title: t.title, priority: t.priority, status: t.status })) || [])}
+
+Rules:
+- Return ONLY a JSON array of strings (e.g., ["Action 1", "Action 2", ...])
+- Make the items actionable and specific to the projects/tasks provided
+- Include tasks like reviewing timelines, checking in on high priority tasks, or balancing workload
+- Do NOT include any other text, markdown, or code fences — just the raw JSON array`;
+
+    const contents = [
+      { role: 'user', parts: [{ text: prompt }] },
+    ];
+
+    const reply = await callGemini(contents);
+
+    // Parse the JSON array from the response
+    let steps: string[];
+    try {
+      const cleaned = reply
+        .replace(/```json\s*/gi, '')
+        .replace(/```\s*/gi, '')
+        .trim();
+      steps = JSON.parse(cleaned);
+
+      if (!Array.isArray(steps)) {
+        throw new Error('Response is not an array');
+      }
+    } catch (_parseError) {
+      steps = reply
+        .split('\n')
+        .map((line: string) => line.replace(/^[\d\-*.)]+\s*/, '').trim())
+        .filter((line: string) => line.length > 0)
+        .slice(0, 6);
+    }
+
+    res.status(200).json({ success: true, data: steps });
+  } catch (error) {
+    console.error('❌ AI Daily Plan error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to generate daily plan',
+      error: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+};
+
