@@ -8,8 +8,9 @@ import { AuthRequest } from '../middleware/auth.middleware';
 const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
 const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
 
-// In-memory store for OTPs (For production, use Redis or MongoDB)
-const otpStore = new Map<string, { otp: string, expiresAt: number }>();
+import { redisClient } from '../config/redis';
+
+// We now use Redis instead of in-memory store for OTPs
 
 // @desc    Get all users
 // @route   GET /api/users
@@ -501,11 +502,8 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     
-    // Store OTP with 10 minutes expiration
-    otpStore.set(email, {
-      otp,
-      expiresAt: Date.now() + 10 * 60 * 1000 // 10 mins
-    });
+    // Store OTP in Redis with 10 minutes (600 seconds) expiration
+    await redisClient.setEx(email, 600, otp);
 
     // Send email using Resend
     const mailOptions = {
@@ -561,20 +559,14 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const storedData = otpStore.get(email);
+    const storedOtp = await redisClient.get(email);
 
-    if (!storedData) {
+    if (!storedOtp) {
       res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
       return;
     }
 
-    if (Date.now() > storedData.expiresAt) {
-      otpStore.delete(email);
-      res.status(400).json({ success: false, message: 'OTP has expired' });
-      return;
-    }
-
-    if (storedData.otp !== otp) {
+    if (storedOtp !== otp) {
       res.status(400).json({ success: false, message: 'Invalid OTP' });
       return;
     }
@@ -594,7 +586,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     }
 
     // Clear OTP
-    otpStore.delete(email);
+    await redisClient.del(email);
 
     res.status(200).json({
       success: true,

@@ -1,7 +1,7 @@
 import app from './app';
 import connectDB from './config/database';
 import { config } from './config';
-
+import { connectRedis } from './config/redis';
 import http from 'http';
 import { initSocket } from './utils/socket';
 
@@ -9,6 +9,9 @@ const startServer = async (): Promise<void> => {
   try {
     // Connect to MongoDB
     await connectDB();
+    
+    // Connect to Redis
+    await connectRedis();
     
     // Create HTTP server
     const server = http.createServer(app);
