@@ -508,7 +508,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     // Send email using Resend
     const mailOptions = {
       from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: email,
+      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
       subject: 'Your Password Reset OTP',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">

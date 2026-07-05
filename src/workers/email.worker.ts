@@ -114,7 +114,7 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
       console.log(`📧 [Worker] Preparing to send email to ${user.email}...`);
       const mailOptions = {
         from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-        to: user.email,
+        to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
         subject: `New Project Assignment: ${projectName}`,
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -170,7 +170,7 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
     console.log(`📧 [Worker] Preparing to send task email to ${user.email}...`);
     const mailOptions = {
       from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: user.email,
+      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
       subject: `New Task Assigned: ${taskTitle}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -216,7 +216,7 @@ const processStatusUpdateEmailTask = async (data: {
   try {
     const mailOptions = {
       from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: creatorEmail,
+      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
       subject: `Task Status Updated: ${taskTitle}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
