@@ -2,11 +2,20 @@ import { Request, Response } from 'express';
 import User from '../models/user.model';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
+// import { Resend } from 'resend';
 import { AuthRequest } from '../middleware/auth.middleware';
 
-const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+// const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
+// const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 import { redisClient } from '../config/redis';
 
@@ -507,8 +516,8 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
     // Send email using Resend
     const mailOptions = {
-      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
+      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      to: email,
       subject: 'Your Password Reset OTP',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
@@ -525,10 +534,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       `,
     };
 
-    const response = await resend.emails.send(mailOptions);
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
+    await transporter.sendMail(mailOptions);
 
     console.log(`\n\n========================================`);
     console.log(`✉️  EMAIL SENT WITH OTP FOR ${email}: ${otp}`);

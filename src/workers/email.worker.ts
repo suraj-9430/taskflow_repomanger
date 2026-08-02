@@ -1,5 +1,6 @@
 import amqp from 'amqplib';
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
+// import { Resend } from 'resend';
 import dotenv from 'dotenv';
 import mongoose from 'mongoose';
 import User from '../models/user.model';
@@ -7,8 +8,16 @@ import Project from '../models/project.model';
 
 dotenv.config();
 
-const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
-const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+// const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
+// const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
 
 const QUEUE_NAME = 'project_assigned_queue';
 const TASK_QUEUE_NAME = 'task_assigned_queue';
@@ -113,8 +122,8 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
     for (const user of users) {
       console.log(`📧 [Worker] Preparing to send email to ${user.email}...`);
       const mailOptions = {
-        from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-        to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
+        from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+        to: user.email,
         subject: `New Project Assignment: ${projectName}`,
         html: `
           <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -132,12 +141,9 @@ const processProjectEmailTask = async (data: { projectId: string, projectName: s
         `,
       };
 
-      console.log(`📧 [Worker] Dispatching request via Resend API to ${user.email}...`);
-      const response = await resend.emails.send(mailOptions);
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-      console.log(`✅ [Worker] Resend delivery success! Email sent to ${user.email}`);
+      console.log(`📧 [Worker] Dispatching request via Nodemailer to ${user.email}...`);
+      await transporter.sendMail(mailOptions);
+      console.log(`✅ [Worker] Nodemailer delivery success! Email sent to ${user.email}`);
     }
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processProjectEmailTask:`, dbOrMailError);
@@ -169,8 +175,8 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
 
     console.log(`📧 [Worker] Preparing to send task email to ${user.email}...`);
     const mailOptions = {
-      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
+      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      to: user.email,
       subject: `New Task Assigned: ${taskTitle}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -188,12 +194,9 @@ const processTaskEmailTask = async (data: { taskId: string, taskTitle: string, a
       `,
     };
 
-    console.log(`📧 [Worker] Dispatching task request via Resend API to ${user.email}...`);
-    const response = await resend.emails.send(mailOptions);
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-    console.log(`✅ [Worker] Resend delivery success! Task Email sent to ${user.email}`);
+    console.log(`📧 [Worker] Dispatching task request via Nodemailer to ${user.email}...`);
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ [Worker] Nodemailer delivery success! Task Email sent to ${user.email}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processTaskEmailTask:`, dbOrMailError);
     throw dbOrMailError;
@@ -215,8 +218,8 @@ const processStatusUpdateEmailTask = async (data: {
 
   try {
     const mailOptions = {
-      from: `"TaskFlow Pro" <${FROM_EMAIL}>`,
-      to: process.env.TEST_EMAIL_OVERRIDE || 'rajsuraj663@gmail.com', // Override to prevent Resend free tier crash
+      from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
+      to: creatorEmail,
       subject: `Task Status Updated: ${taskTitle}`,
       html: `
         <div style="font-family: Arial, sans-serif; padding: 20px; background-color: #f4f4f4;">
@@ -239,12 +242,9 @@ const processStatusUpdateEmailTask = async (data: {
       `,
     };
 
-    console.log(`📧 [Worker] Dispatching status update request via Resend API to ${creatorEmail}...`);
-    const response = await resend.emails.send(mailOptions);
-    if (response.error) {
-      throw new Error(response.error.message);
-    }
-    console.log(`✅ [Worker] Resend delivery success! Status Update Email sent to ${creatorEmail}`);
+    console.log(`📧 [Worker] Dispatching status update request via Nodemailer to ${creatorEmail}...`);
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ [Worker] Nodemailer delivery success! Status Update Email sent to ${creatorEmail}`);
   } catch (dbOrMailError) {
     console.error(`❌ [Worker] Failure inside processStatusUpdateEmailTask:`, dbOrMailError);
     throw dbOrMailError;

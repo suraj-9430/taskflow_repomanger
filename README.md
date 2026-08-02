@@ -1,182 +1,88 @@
-# Trade Finance & TaskFlow Pro Backend
+# Trade Finance & TaskFlowPro Backend API (v2.2)
 
-A robust, enterprise-grade backend API built with **Node.js, Express, TypeScript, MongoDB, and RabbitMQ**. It supports secure User Authentication, Forward Contract workflows, and a real-time collaborative Project & Task management system powered by message-queue email workers.
+A robust, enterprise-grade backend API built with **Node.js, Express, TypeScript, MongoDB, Redis, RabbitMQ, and Google Gemini 2.5 Flash**.
 
 ---
 
 ## 🚀 Key Features
 
-* **🔐 Secure Authentication**: JWT-based session management, cookies, salted bcrypt passwords, password reset workflow with OTPs.
-* **📈 Forward Contracts**: Complete lifecycle management for forward contracts (Draft, Saved, Submitted, and Status transitions).
-* **📋 Project & Task Management**: Multi-user task assignment with project organization.
-* **✉️ Async Event Broker (RabbitMQ)**: Non-blocking, background email processing via message queues (`project_assigned_queue` and `task_assigned_queue`).
-* **📧 Professional Notifications**: Custom HTML templates for project and task assignments powered by NodeMailer.
+* **🤖 AI Project Health Center**: MongoDB multi-collection aggregation pipelines evaluating continuous project health scores, predictive risk analysis, and velocity completion forecasting using Gemini 2.5 Flash.
+* **🎯 AI Skills Matrix & Resource Allocation**: Employee skill profile tracking (⭐ 1-5 stars) and AI employee recommendation engine for tasks and projects.
+* **💬 AI Command Center (Natural Language Actions)**: Natural language command parsing, entity extraction, RBAC authorization validation, and direct execution against MongoDB collections.
+* **🔐 Secure Authentication**: JWT session management, HttpOnly cookies, salted bcrypt passwords, OTP reset workflows, and role-based access control.
+* **✉️ Async Event Broker (RabbitMQ)**: Non-blocking background email queues (`project_assigned_queue`, `task_assigned_queue`).
+* **📍 Geofenced Attendance Engine**: Spherical Law of Cosines distance calculation for 10-meter office check-in enforcement.
 
 ---
 
-## 🛠️ Technology Stack
+## 🔗 API Endpoint Reference
 
-* **Runtime**: Node.js (v18+)
-* **Language**: TypeScript (`ts-node`)
-* **Framework**: Express.js
-* **Database**: MongoDB (via Mongoose)
-* **Message Broker**: RabbitMQ (via `amqplib` and CloudAMQP)
-* **Email Sender**: Nodemailer (SMTP)
-
----
-
-## 📂 Project Structure
-
-```text
-├── src/
-│   ├── app.ts            # App initialization, global middlewares, health checks
-│   ├── server.ts         # Server entry point
-│   ├── config/           # Database & environment configurations
-│   ├── controllers/      # Route request/response handlers
-│   ├── middleware/       # JWT auth & helper middlewares
-│   ├── models/           # Mongoose schemas & TypeScript interfaces
-│   ├── routes/           # REST API endpoints mapping
-│   ├── types/            # Custom TypeScript types
-│   ├── utils/            # Shared utilities (e.g. rabbitmq publisher)
-│   └── workers/          # Background worker tasks (e.g. email queue consumers)
-├── .env                  # Configuration variables
-├── tsconfig.json         # TypeScript configurations
-├── package.json          # Dependency definitions
-└── README.md             # Project documentation
-```
+### 🤖 AI Intelligence & Health Endpoints (`/api/ai`)
+| Method | Endpoint | Description | Auth |
+|:---|:---|:---|:---:|
+| **GET** | `/api/ai/project-health/:projectId?` | Get AI project health report & score | **Yes** |
+| **GET** | `/api/ai/executive-brief` | Get daily morning executive brief | **Yes** |
+| **GET** | `/api/ai/weekly-report` | Get weekly performance report | **Yes** |
+| **POST** | `/api/ai/qa` | Natural language project Q&A | **Yes** |
+| **POST** | `/api/ai/chat` | Conversational AI chat | **Yes** |
+| **POST** | `/api/ai/breakdown` | Generate task breakdown checklist | **Yes** |
 
 ---
 
-## ⚙️ Environment Variables
+### 🎯 Skills Matrix Endpoints (`/api/skills`)
+| Method | Endpoint | Description | Auth |
+|:---|:---|:---|:---:|
+| **GET** | `/api/skills/my-skills` | Get logged-in user's skills profile | **Yes** |
+| **GET** | `/api/skills/employee/:employeeId` | Get employee's skill matrix | **Yes** |
+| **PUT** | `/api/skills/my-skills` | Update technical/soft skills & experience | **Yes** |
+| **POST** | `/api/skills/suggest-employee` | Gemini AI employee recommendation for task | **Yes** |
+| **GET** | `/api/skills/gap-analysis` | Get team skill gap analysis | **Yes** |
+| **GET** | `/api/skills/learning-recommendations` | Get AI personal learning roadmap | **Yes** |
 
-Create a `.env` file in the root folder with the following variables:
+---
+
+### ⚡ Natural Language Command Center (`/api/command`)
+| Method | Endpoint | Description | Auth |
+|:---|:---|:---|:---:|
+| **POST** | `/api/command/command` | Execute natural language action with RBAC validation | **Yes** |
+
+---
+
+### 📁 Projects (`/api/projects`) & 📝 Tasks (`/api/tasks`)
+| Method | Endpoint | Description | Auth |
+|:---|:---|:---|:---:|
+| **GET** | `/api/projects` | Fetch all projects | **Yes** |
+| **POST** | `/api/projects` | Create new project | **Yes** |
+| **GET** | `/api/tasks` | Fetch all tasks | **Yes** |
+| **POST** | `/api/tasks` | Create new task | **Yes** |
+
+---
+
+## ⚙️ Environment Variables (.env)
 
 ```env
-# Server Configuration
 PORT=5000
 NODE_ENV=development
-
-# MongoDB Configuration
-MONGODB_URI=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>?appName=<app>
-
-# CORS Configuration
-CORS_ORIGIN=http://localhost:3000
-
-# JWT Configuration
-JWT_SECRET=your_super_secret_jwt_key_here
-
-# Email SMTP Config (Nodemailer)
-EMAIL_USER=your-email@gmail.com
-EMAIL_PASS=your-smtp-app-password
-
-# RabbitMQ Configuration (CloudAMQP)
-# IMPORTANT: Must start with amqps:// or amqp:// (Copy directly from your CloudAMQP dashboard)
+MONGODB_URI=mongodb+srv://username:password@cluster.mongodb.net/taskflowpro
+JWT_SECRET=your_jwt_secret_key
+GEMINI_API_KEY=your_google_gemini_api_key
 RABBITMQ_URL=amqps://username:password@hostname.rmq.cloudamqp.com/vhost
 ```
 
 ---
 
-## 🏎️ Getting Started
+## 🏎️ Running Locally
 
-### 1. Installation
-Install all backend dependencies:
 ```bash
+# Install dependencies
 npm install
-```
 
-### 2. Database Seeding (Optional)
-If you need to seed initial users or projects:
-```bash
-# Seed initial users/roles
+# Seed initial database records
 npm run seed
 
-# Seed default projects
-npm run seed:projects
-```
-
-### 3. Run Development Server
-Launches the Express API server with automatic hot-reloading (`nodemon`):
-```bash
+# Run backend API server
 npm run dev
-```
 
-### 4. Run Message Worker
-Starts the background RabbitMQ consumer queue worker to process & send email notifications asynchronously:
-```bash
+# Run RabbitMQ email worker
 npm run worker
 ```
-
----
-
-## 🔗 API Reference
-
-### 👤 User Endpoints (`/api/users`)
-
-| Method | Endpoint | Description | Auth Required |
-|:---|:---|:---|:---:|
-| **GET** | `/api/users` | Fetch all users | No |
-| **GET** | `/api/users/employees` | Fetch only employees | No |
-| **GET** | `/api/users/:id` | Fetch user details by ID | No |
-| **POST** | `/api/users` | Register a new user | No |
-| **POST** | `/api/users/login` | Login user & issue JWT | No |
-| **POST** | `/api/users/logout` | Clear user session cookies | No |
-| **POST** | `/api/users/forgot-password` | Request password reset OTP | No |
-| **POST** | `/api/users/reset-password`| Reset password using OTP | No |
-| **PUT** | `/api/users/:id` | Update user details | No |
-
----
-
-### 📑 Forward Contracts (`/api/forward-contracts`)
-
-| Method | Endpoint | Description | Auth Required |
-|:---|:---|:---|:---:|
-| **GET** | `/api/forward-contracts` | Get all forward contracts | No |
-| **GET** | `/api/forward-contracts/:id` | Get contract details by ID | No |
-| **GET** | `/api/forward-contracts/reference/:refNumber` | Get contract by unique Ref Number | No |
-| **GET** | `/api/forward-contracts/customer/:customerId` | Get all contracts for a specific customer | No |
-| **POST** | `/api/forward-contracts` | Create & **Submit** forward contract | No |
-| **POST** | `/api/forward-contracts/save` | Create & Save forward contract | No |
-| **POST** | `/api/forward-contracts/draft` | Create & Save forward contract as **Draft** | No |
-| **PUT** | `/api/forward-contracts/:id` | Update contract details | No |
-| **PATCH** | `/api/forward-contracts/:id/status` | Update contract status only | No |
-| **DELETE**| `/api/forward-contracts/:id` | Delete a contract | No |
-
----
-
-### 📁 Projects (`/api/projects`)
-
-*🛡️ All project endpoints require `Authorization: Bearer <JWT_TOKEN>` header.*
-
-| Method | Endpoint | Description | Auth Required |
-|:---|:---|:---|:---:|
-| **GET** | `/api/projects` | Fetch all projects | **Yes** |
-| **GET** | `/api/projects/:id` | Get project by ID | **Yes** |
-| **POST** | `/api/projects` | Create a new project *(Triggers RabbitMQ project assignment event)* | **Yes** |
-| **PUT** | `/api/projects/:id` | Update project details | **Yes** |
-| **DELETE**| `/api/projects/:id` | Delete project | **Yes** |
-
----
-
-### 📝 Tasks (`/api/tasks`)
-
-*🛡️ All task endpoints require `Authorization: Bearer <JWT_TOKEN>` header.*
-
-| Method | Endpoint | Description | Auth Required |
-|:---|:---|:---|:---:|
-| **GET** | `/api/tasks` | Fetch all tasks | **Yes** |
-| **GET** | `/api/tasks/:id` | Get task by ID | **Yes** |
-| **POST** | `/api/tasks` | Create a new task *(Triggers RabbitMQ task assignment event)* | **Yes** |
-| **PUT** | `/api/tasks/:id` | Update task details | **Yes** |
-| **DELETE**| `/api/tasks/:id` | Delete task | **Yes** |
-
----
-
-## 🏗️ How RabbitMQ Works in this Backend
-
-1. **Triggering Event**: When a user creates a new project or task and assigns it to members (e.g., via `POST /api/projects` or `POST /api/tasks`), the controller publishes a message to RabbitMQ using:
-   ```typescript
-   await publishToQueue('project_assigned_queue', { projectId, projectName, assigneeIds });
-   ```
-2. **Queuing**: RabbitMQ receives and queues the message persistently in the broker.
-3. **Consumption**: The background **worker process** (`npm run worker`) consumes messages from the queue.
-4. **Email Delivery**: The worker resolves the user emails from MongoDB, generates custom HTML styled templates, and sends emails asynchronously via Nodemailer (Gmail SMTP). This keeps the main API request lightning fast!

@@ -18,6 +18,11 @@ export interface IUser extends Document {
   isActive: boolean;
   avatar?: string;
   bio?: string;
+  skills?: {
+    technical: Array<{ name: string; category: string; rating: number; verified?: boolean }>;
+    soft: string[];
+    experience: string[];
+  };
   leaveBalance: {
     sick: number;
     casual: number;
@@ -140,6 +145,18 @@ const userSchema = new Schema<IUser>(
     bio: {
       type: String,
       default: '',
+    },
+    skills: {
+      technical: [
+        {
+          name: { type: String, required: true },
+          category: { type: String, required: true },
+          rating: { type: Number, required: true, min: 1, max: 5, default: 3 },
+          verified: { type: Boolean, default: false },
+        },
+      ],
+      soft: [{ type: String }],
+      experience: [{ type: String }],
     },
     leaveBalance: {
       sick: { type: Number, default: 10 },
