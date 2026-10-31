@@ -1,5 +1,6 @@
 import { Response } from 'express';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { config } from '../config';
 import Project from '../models/project.model';
 import Task from '../models/task.model';
 import User from '../models/user.model';
@@ -32,16 +33,15 @@ You are equipped with advanced AI features:
 Keep responses concise, practical, and action-oriented. Use bullet points for lists. Be warm but professional.`;
 
 /**
- * Calls the Gemini REST API using native fetch (Node 18+).
- * No external HTTP library needed.
+ * Calls the Gemini REST API using native fetch with an explicit 15s timeout (PDF Section 13).
  */
-const callGemini = async (
+export const callGemini = async (
   contents: Array<{ role: string; parts: Array<{ text: string }> }>,
   systemInstruction?: string
 ): Promise<string> => {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error('GEMINI_API_KEY is not configured in environment variables');
+  const apiKey = config.ai.geminiApiKey || process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey || !config.ai.enabled) {
+    throw new Error('AI assistant integration is not enabled or configured on this server');
   }
 
   const url = `${GEMINI_BASE_URL}/${GEMINI_MODEL}:generateContent?key=${apiKey}`;
@@ -60,31 +60,71 @@ const callGemini = async (
     };
   }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15 second explicit timeout
 
-  if (!response.ok) {
-    const errorBody = await response.text();
-    console.error(`❌ Gemini API error (${response.status}):`, errorBody);
-    throw new Error(`Gemini API returned ${response.status}`);
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      console.error(`❌ Gemini API error (${response.status}):`, errorBody);
+      throw new Error(`Gemini API returned ${response.status}`);
+    }
+
+    const data: any = await response.json();
+    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+    if (!text) {
+      throw new Error('No response text generated from Gemini');
+    }
+
+    return text;
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Gemini API request timed out after 15 seconds');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  const data: any = await response.json();
-  const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-  if (!text) {
-    console.error('❌ Gemini API raw response missing text:', JSON.stringify(data, null, 2));
-    throw new Error('No response generated from Gemini');
-  }
-
-  return text;
 };
 
-// Helper: Safely parse JSON from Gemini markdown output
-const parseGeminiJson = (rawText: string, fallback: any): any => {
+/**
+ * Validates untrusted AI model output against a strict schema (PDF Section 13)
+ */
+export const validateStringArrayOutput = (rawText: string, maxItems = 10): string[] => {
+  const cleaned = rawText
+    .replace(/```json\s*/gi, '')
+    .replace(/```\s*/gi, '')
+    .trim();
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (err) {
+    throw new Error('AI output was not valid JSON');
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new Error('AI output must be a non-empty array');
+  }
+
+  return parsed
+    .filter((item) => typeof item === 'string' && item.trim().length > 0)
+    .slice(0, maxItems)
+    .map((item) => item.trim().substring(0, 150));
+};
+
+/**
+ * Safely parse JSON from Gemini markdown output with fallback support
+ */
+export const parseGeminiJson = (rawText: string, fallback: any): any => {
   try {
     const cleaned = rawText
       .replace(/```json\s*/gi, '')
@@ -156,17 +196,26 @@ Rules:
 - Order steps logically from start to finish
 - Do NOT include any other text, markdown, or code fences — just the raw JSON array`;
 
-    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-    const reply = await callGemini(contents);
-    const steps = parseGeminiJson(reply, [
-      'Define initial requirements',
-      'Set up environment & baseline',
-      'Execute core logic',
-      'Perform peer review & testing',
-      'Deploy changes',
-    ]);
+    let steps: string[];
+    let isFallback = false;
 
-    res.status(200).json({ success: true, data: steps });
+    try {
+      const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+      const reply = await callGemini(contents);
+      steps = validateStringArrayOutput(reply, 10);
+    } catch (aiErr) {
+      console.warn('⚠️ AI breakdown failed or returned invalid format; utilizing deterministic fallback:', aiErr);
+      isFallback = true;
+      steps = [
+        'Define initial requirements',
+        'Set up environment & baseline',
+        'Execute core logic',
+        'Perform peer review & testing',
+        'Deploy changes',
+      ];
+    }
+
+    res.status(200).json({ success: true, data: steps, isFallback });
   } catch (error) {
     console.error('❌ AI Breakdown error:', error);
     res.status(500).json({
@@ -195,16 +244,25 @@ Rules:
 - Include tasks like reviewing timelines, checking in on high priority tasks, or balancing workload
 - Do NOT include any other text, markdown, or code fences — just the raw JSON array`;
 
-    const contents = [{ role: 'user', parts: [{ text: prompt }] }];
-    const reply = await callGemini(contents);
-    const steps = parseGeminiJson(reply, [
-      'Prioritize backend API integration before sprint review',
-      'Review pending leave requests for team members',
-      'Rebalance workload for overloaded developers',
-      'Check status of overdue high-priority tasks',
-    ]);
+    let steps: string[];
+    let isFallback = false;
 
-    res.status(200).json({ success: true, data: steps });
+    try {
+      const contents = [{ role: 'user', parts: [{ text: prompt }] }];
+      const reply = await callGemini(contents);
+      steps = validateStringArrayOutput(reply, 10);
+    } catch (aiErr) {
+      console.warn('⚠️ AI daily plan failed or returned invalid format; utilizing deterministic fallback:', aiErr);
+      isFallback = true;
+      steps = [
+        'Prioritize backend API integration before sprint review',
+        'Review pending leave requests for team members',
+        'Rebalance workload for overloaded developers',
+        'Check status of overdue high-priority tasks',
+      ];
+    }
+
+    res.status(200).json({ success: true, data: steps, isFallback });
   } catch (error) {
     console.error('❌ AI Daily Plan error:', error);
     res.status(500).json({

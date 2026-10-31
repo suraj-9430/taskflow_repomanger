@@ -40,6 +40,8 @@ export const connectRabbitMQ = async (): Promise<amqp.Channel | null> => {
   }
 };
 
+export const isRabbitMQConnected = (): boolean => Boolean(connection && channel);
+
 export const getChannel = (): amqp.Channel => {
   if (!channel) {
     throw new Error('RabbitMQ channel not initialized');

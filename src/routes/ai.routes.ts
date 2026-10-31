@@ -9,11 +9,13 @@ import {
   askProjectHealthQA,
 } from '../controllers/ai.controller';
 import { protect } from '../middleware/auth.middleware';
+import { aiLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
-// All AI routes require a valid JWT token
+// All AI routes require a valid JWT token and are protected by dedicated rate limits
 router.use(protect);
+router.use(aiLimiter);
 
 // POST /api/ai/chat — Conversational AI chat with Gemini
 router.post('/chat', chatWithAI);
@@ -37,4 +39,3 @@ router.get('/weekly-report', getWeeklyReport);
 router.post('/qa', askProjectHealthQA);
 
 export default router;
-

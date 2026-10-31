@@ -1,7 +1,12 @@
 import express, { Application, Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
+import mongoose from 'mongoose';
 import { config } from './config';
+import { redisClient } from './config/redis';
+import { isRabbitMQConnected } from './utils/rabbitmq';
+import { correlationIdMiddleware, CorrelatedRequest } from './middleware/correlationId';
+import { requestLogger } from './middleware/logger';
 
 // Import routes
 import userRoutes from './routes/user.routes';
@@ -63,11 +68,39 @@ app.use(cors({
   },
   credentials: true,
 }));
+app.use(correlationIdMiddleware);
+app.use(requestLogger);
 app.use(express.json());
 app.use(cookieParser());
 app.use(express.urlencoded({ extended: true }));
 
-// Health check route
+// Liveness probe (PDF Section 15 & 16)
+app.get('/health/live', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'live', timestamp: new Date().toISOString() });
+});
+
+// Readiness probe verifying MongoDB, Redis, and broker readiness
+app.get('/health/ready', (_req: Request, res: Response) => {
+  const isMongoReady = mongoose.connection.readyState === 1;
+  const isRedisReady = redisClient.isAvailable();
+  const isRabbitReady = isRabbitMQConnected();
+
+  const isReady = isMongoReady; // Mongo is the authoritative core data store
+
+  const status = {
+    status: isReady ? 'ready' : 'unhealthy',
+    timestamp: new Date().toISOString(),
+    services: {
+      mongodb: isMongoReady ? 'connected' : 'disconnected',
+      redis: isRedisReady ? 'connected' : 'degraded',
+      rabbitmq: isRabbitReady ? 'connected' : 'disconnected',
+    },
+  };
+
+  res.status(isReady ? 200 : 503).json(status);
+});
+
+// Health check route (backward compatibility)
 app.get('/health', (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'ok',
@@ -99,11 +132,12 @@ app.use((_req: Request, res: Response) => {
 });
 
 // Global Error Handler
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err.stack);
+app.use((err: Error, req: CorrelatedRequest, res: Response, _next: NextFunction) => {
+  console.error(`[ERR:${req.correlationId || 'none'}]`, err.stack);
   res.status(500).json({
     success: false,
     message: 'Internal Server Error',
+    requestId: req.correlationId,
     error: config.nodeEnv === 'development' ? err.message : undefined,
   });
 });
