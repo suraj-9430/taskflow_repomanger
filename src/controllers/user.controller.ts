@@ -5,6 +5,7 @@ import jwt from 'jsonwebtoken';
 import nodemailer from 'nodemailer';
 // import { Resend } from 'resend';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { config } from '../config';
 
 // const resend = new Resend(process.env.RESEND_API_KEY || 're_dummy_key');
 // const FROM_EMAIL = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
@@ -277,20 +278,18 @@ export const fetchuserlimit = async (req: Request, res: Response) => {
 }
 
 const generateAccessToken = (userId: string, role: string): string => {
-  const jwtSecret = process.env.JWT_SECRET || 'fallback_secret_key_change_me';
   return jwt.sign(
     { user: { id: userId, role } },
-    jwtSecret,
-    { expiresIn: '15m' }
+    config.jwt.secret,
+    { expiresIn: (config.jwt.accessExpiresIn || '15m') as any }
   );
 };
 
 const generateRefreshToken = (userId: string, role: string): string => {
-  const refreshSecret = process.env.REFRESH_SECRET || process.env.JWT_SECRET || 'fallback_secret_key_change_me';
   return jwt.sign(
     { user: { id: userId, role } },
-    refreshSecret,
-    { expiresIn: '7d' }
+    config.jwt.refreshSecret,
+    { expiresIn: (config.jwt.refreshExpiresIn || '7d') as any }
   );
 };
 
@@ -397,7 +396,7 @@ export const refreshUserToken = async (req: Request, res: Response): Promise<voi
       return;
     }
 
-    const refreshSecret = process.env.REFRESH_SECRET || process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+    const refreshSecret = config.jwt.refreshSecret;
     let decoded: any;
     try {
       decoded = jwt.verify(refreshToken, refreshSecret);

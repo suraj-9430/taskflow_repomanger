@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import { config } from '../config';
 
 // Extend Request to carry decoded user info
 export interface AuthRequest extends Request {
@@ -39,7 +40,7 @@ export const protect = (
       return;
     }
 
-    const secret = process.env.JWT_SECRET || 'fallback_secret_key_change_me';
+    const secret = config.jwt.secret;
     const decoded = jwt.verify(token, secret) as { user: { id: string; role: string } };
 
     // Attach user info to the request for downstream use

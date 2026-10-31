@@ -16,30 +16,29 @@ import {
   getCurrentProfile,
   updateCurrentProfile,
 } from '../controllers/user.controller';
-import { protect } from '../middleware/auth.middleware';
+import { protect, authorize } from '../middleware/auth.middleware';
 import { authLimiter } from '../middleware/rateLimiter';
 
 const router = Router();
 
-// GET /api/users - Get all users
-router.get('/', protect, getAllUsers);
-router.get('/fetchuserlimit', protect, fetchuserlimit);
-router.get('/countuserbyrole', protect, countuserbyrole);
-router.get('/countactiveusers', protect, countactiveuser);
+// Administrative and management user directory endpoints
+router.get('/', protect, authorize('admin', 'manager'), getAllUsers);
+router.get('/fetchuserlimit', protect, authorize('admin', 'manager'), fetchuserlimit);
+router.get('/countuserbyrole', protect, authorize('admin', 'manager'), countuserbyrole);
+router.get('/countactiveusers', protect, authorize('admin', 'manager'), countactiveuser);
 
-// GET /api/users/employees - Get employees only (role=employee)
+// Scoped employee directory for project assignment (all authenticated users)
 router.get('/employees', protect, getEmployees);
 
-// Profile routes (private)
+// Profile routes (caller updates their own verified profile)
 router.get('/profile', protect, getCurrentProfile);
 router.put('/profile', protect, updateCurrentProfile);
 
-
-// // GET /api/users/:id - Get user by ID
+// Specific user lookup
 router.get('/:id', protect, getUserById);
 
-// // POST /api/users - Create new user
-router.post('/', protect, createUser);
+// Admin-only user provisioning
+router.post('/', protect, authorize('admin'), createUser);
 
 // POST /api/users/login - Login user
 router.post('/login', authLimiter, loginUser);
@@ -56,8 +55,8 @@ router.post('/forgot-password', authLimiter, forgotPassword);
 // POST /api/users/reset-password - Reset password with OTP
 router.post('/reset-password', authLimiter, resetPassword);
 
-// PUT /api/users/:id - Update user
-router.put('/:id', protect, updateUser);
+// Admin-only user modification (role/status elevation)
+router.put('/:id', protect, authorize('admin'), updateUser);
 
 // // DELETE /api/users/:id - Delete user
 // router.delete('/:id', deleteUser);

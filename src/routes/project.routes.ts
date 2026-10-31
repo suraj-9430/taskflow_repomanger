@@ -8,28 +8,30 @@ import {
   bulkUpdateProjects,
   bulkDeleteProjects,
 } from '../controllers/project.controller';
-import { protect } from '../middleware/auth.middleware';
+import { protect, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
 
 // All project routes require a valid JWT token
 router.use(protect);
 
-// GET  /api/projects
+// GET /api/projects - role-scoped project list
 router.get('/', getAllProjects);
-router.put('/bulk', bulkUpdateProjects);
-router.delete('/bulk', bulkDeleteProjects);
 
-// GET  /api/projects/:id
+// Management bulk operations
+router.put('/bulk', authorize('admin', 'manager'), bulkUpdateProjects);
+router.delete('/bulk', authorize('admin'), bulkDeleteProjects);
+
+// GET /api/projects/:id - single project lookup (scoped to assignees for employees)
 router.get('/:id', getProjectById);
 
-// POST /api/projects
-router.post('/', createProject);
+// POST /api/projects - restricted to admin and manager
+router.post('/', authorize('admin', 'manager'), createProject);
 
-// PUT  /api/projects/:id
-router.put('/:id', updateProject);
+// PUT /api/projects/:id - restricted to admin and manager
+router.put('/:id', authorize('admin', 'manager'), updateProject);
 
-// DELETE /api/projects/:id
-router.delete('/:id', deleteProject);
+// DELETE /api/projects/:id - restricted to admin
+router.delete('/:id', authorize('admin'), deleteProject);
 
 export default router;

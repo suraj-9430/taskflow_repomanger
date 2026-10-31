@@ -10,7 +10,7 @@ import {
   bulkUpdateTasks,
   bulkDeleteTasks,
 } from '../controllers/task.controller';
-import { protect } from '../middleware/auth.middleware';
+import { protect, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -21,13 +21,13 @@ router.route('/')
   .get(getAllTasks)
   .post(createTask);
 
-router.put('/bulk', bulkUpdateTasks);
-router.delete('/bulk', bulkDeleteTasks);
+router.put('/bulk', authorize('admin', 'manager'), bulkUpdateTasks);
+router.delete('/bulk', authorize('admin'), bulkDeleteTasks);
 
 router.route('/:id')
   .get(getTaskById)
   .put(updateTask)
-  .delete(deleteTask);
+  .delete(authorize('admin', 'manager'), deleteTask);
 
 router.route('/:id/comments')
   .get(getTaskComments)

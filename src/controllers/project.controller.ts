@@ -1,29 +1,41 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import Project from '../models/project.model';
 import { publishToQueue } from '../utils/rabbitmq';
 import mongoose from 'mongoose';
+import { AuthRequest } from '../middleware/auth.middleware';
+
+const VALID_STATUSES = ['In Progress', 'Completed', 'On Hold'];
+const VALID_PRIORITIES = ['Low', 'Medium', 'High'];
 
 // ─────────────────────────────────────────────
-// GET /api/projects  — fetch all with assignee names
+// GET /api/projects  — fetch projects scoped to caller role
 // ─────────────────────────────────────────────
-export const getAllProjects = async (req: Request, res: Response): Promise<void> => {
+export const getAllProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { search, status, priority, assigneeId, deadlineFrom, deadlineTo } = req.query;
     const query: any = {};
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // Scope for standard employees: only show projects they are assigned to
+    if (userRole === 'employee' && userId) {
+      query.assignees = userId;
+    }
 
     if (search && typeof search === 'string') {
+      const sanitized = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.$or = [
-        { projectName: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { projectId: { $regex: search, $options: 'i' } },
+        { projectName: { $regex: sanitized, $options: 'i' } },
+        { description: { $regex: sanitized, $options: 'i' } },
+        { projectId: { $regex: sanitized, $options: 'i' } },
       ];
     }
 
-    if (status && typeof status === 'string' && status !== 'all') {
+    if (status && typeof status === 'string' && status !== 'all' && VALID_STATUSES.includes(status)) {
       query.status = status;
     }
 
-    if (priority && typeof priority === 'string' && priority !== 'all') {
+    if (priority && typeof priority === 'string' && priority !== 'all' && VALID_PRIORITIES.includes(priority)) {
       query.priority = priority;
     }
 
@@ -52,8 +64,17 @@ export const getAllProjects = async (req: Request, res: Response): Promise<void>
   }
 };
 
-export const bulkUpdateProjects = async (req: Request, res: Response): Promise<void> => {
+// ─────────────────────────────────────────────
+// PUT /api/projects/bulk  — management bulk update
+// ─────────────────────────────────────────────
+export const bulkUpdateProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userRole = req.user?.role;
+    if (userRole === 'employee') {
+      res.status(403).json({ success: false, message: 'Employees are not authorized to perform bulk project updates' });
+      return;
+    }
+
     const { projectIds, updates } = req.body;
 
     if (!Array.isArray(projectIds) || projectIds.length === 0 || !updates || typeof updates !== 'object') {
@@ -62,9 +83,22 @@ export const bulkUpdateProjects = async (req: Request, res: Response): Promise<v
     }
 
     const allowedUpdates = ['status', 'priority', 'deadline', 'progress'];
-    const sanitizedUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([key, value]) => allowedUpdates.includes(key) && value !== undefined && value !== '')
-    );
+    const sanitizedUpdates: any = {};
+    for (const key of allowedUpdates) {
+      if (updates[key] !== undefined && updates[key] !== '') {
+        sanitizedUpdates[key] = updates[key];
+      }
+    }
+
+    if (sanitizedUpdates.status && !VALID_STATUSES.includes(sanitizedUpdates.status)) {
+      res.status(400).json({ success: false, message: 'Invalid project status' });
+      return;
+    }
+
+    if (sanitizedUpdates.priority && !VALID_PRIORITIES.includes(sanitizedUpdates.priority)) {
+      res.status(400).json({ success: false, message: 'Invalid project priority' });
+      return;
+    }
 
     if (Object.keys(sanitizedUpdates).length === 0) {
       res.status(400).json({ success: false, message: 'No valid bulk update fields were provided' });
@@ -88,8 +122,17 @@ export const bulkUpdateProjects = async (req: Request, res: Response): Promise<v
   }
 };
 
-export const bulkDeleteProjects = async (req: Request, res: Response): Promise<void> => {
+// ─────────────────────────────────────────────
+// DELETE /api/projects/bulk  — management bulk delete
+// ─────────────────────────────────────────────
+export const bulkDeleteProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userRole = req.user?.role;
+    if (userRole !== 'admin') {
+      res.status(403).json({ success: false, message: 'Only administrators can perform bulk project deletions' });
+      return;
+    }
+
     const { projectIds } = req.body;
 
     if (!Array.isArray(projectIds) || projectIds.length === 0) {
@@ -109,9 +152,9 @@ export const bulkDeleteProjects = async (req: Request, res: Response): Promise<v
 };
 
 // ─────────────────────────────────────────────
-// GET /api/projects/:id
+// GET /api/projects/:id  — fetch single project
 // ─────────────────────────────────────────────
-export const getProjectById = async (req: Request, res: Response): Promise<void> => {
+export const getProjectById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const project = await Project.findById(req.params.id)
       .populate('assignees', 'firstName lastName email designation')
@@ -121,6 +164,19 @@ export const getProjectById = async (req: Request, res: Response): Promise<void>
       res.status(404).json({ success: false, message: 'Project not found' });
       return;
     }
+
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // Check project assignment for employees
+    if (userRole === 'employee' && userId) {
+      const isAssignee = project.assignees.some((a: any) => a._id?.toString() === userId || a.toString() === userId);
+      if (!isAssignee) {
+        res.status(403).json({ success: false, message: 'You do not have access to view this project' });
+        return;
+      }
+    }
+
     res.status(200).json({ success: true, data: project });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch project', error: error.message });
@@ -128,9 +184,9 @@ export const getProjectById = async (req: Request, res: Response): Promise<void>
 };
 
 // ─────────────────────────────────────────────
-// POST /api/projects  — create new project
+// POST /api/projects  — create project with trusted session identity
 // ─────────────────────────────────────────────
-export const createProject = async (req: Request, res: Response): Promise<void> => {
+export const createProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
       projectName,
@@ -141,39 +197,55 @@ export const createProject = async (req: Request, res: Response): Promise<void> 
       priority,
       progress,
       assignees,
-      createdBy,    // frontend sends the logged-in user's _id
     } = req.body;
 
-    if (!projectName || !description || !startDate || !deadline || !createdBy) {
+    // Trusted identity derived directly from authenticated session
+    const createdBy = req.user?.id;
+
+    if (!createdBy) {
+      res.status(401).json({ success: false, message: 'User context missing from token' });
+      return;
+    }
+
+    if (!projectName || !description || !startDate || !deadline) {
       res.status(400).json({ success: false, message: 'Missing required fields' });
       return;
     }
 
+    if (status && !VALID_STATUSES.includes(status)) {
+      res.status(400).json({ success: false, message: 'Invalid project status' });
+      return;
+    }
+
+    if (priority && !VALID_PRIORITIES.includes(priority)) {
+      res.status(400).json({ success: false, message: 'Invalid project priority' });
+      return;
+    }
+
     const project = new Project({
-      projectName,
-      description,
+      projectName: projectName.trim(),
+      description: description.trim(),
       startDate,
       deadline,
       status: status || 'In Progress',
       priority: priority || 'Medium',
       progress: progress ?? 0,
       assignees: assignees || [],
-      createdBy,
+      createdBy, // Token-derived identity
     });
 
     await project.save();
 
-    // re-fetch with populated fields to return rich data
     const populated = await Project.findById(project._id)
       .populate('assignees', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email');
 
-    // Fire event to RabbitMQ for email notification
+    // Fire background notification job
     if (assignees && assignees.length > 0) {
       await publishToQueue('project_assigned_queue', {
         projectId: project._id,
         projectName: project.projectName,
-        assigneeIds: assignees,
+        assignees: project.assignees,
       });
     }
 
@@ -184,13 +256,31 @@ export const createProject = async (req: Request, res: Response): Promise<void> 
 };
 
 // ─────────────────────────────────────────────
-// PUT /api/projects/:id  — update project
+// PUT /api/projects/:id  — update project with field allowlist
 // ─────────────────────────────────────────────
-export const updateProject = async (req: Request, res: Response): Promise<void> => {
+export const updateProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const allowedFields = ['projectName', 'description', 'startDate', 'deadline', 'status', 'priority', 'progress', 'assignees'];
+    const updateData: any = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    }
+
+    if (updateData.status && !VALID_STATUSES.includes(updateData.status)) {
+      res.status(400).json({ success: false, message: 'Invalid project status' });
+      return;
+    }
+
+    if (updateData.priority && !VALID_PRIORITIES.includes(updateData.priority)) {
+      res.status(400).json({ success: false, message: 'Invalid project priority' });
+      return;
+    }
+
     const updated = await Project.findByIdAndUpdate(
       req.params.id,
-      { ...req.body },
+      { $set: updateData },
       { new: true, runValidators: true }
     )
       .populate('assignees', 'firstName lastName email designation')
@@ -201,16 +291,6 @@ export const updateProject = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    // Check if there are assignees in the update payload to trigger an email
-    // In a real scenario, you'd only want to email *new* assignees, but for this feature we can send to those in the payload.
-    if (req.body.assignees && req.body.assignees.length > 0) {
-      await publishToQueue('project_assigned_queue', {
-        projectId: updated._id,
-        projectName: updated.projectName,
-        assigneeIds: req.body.assignees,
-      });
-    }
-
     res.status(200).json({ success: true, message: 'Project updated successfully', data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to update project', error: error.message });
@@ -218,9 +298,9 @@ export const updateProject = async (req: Request, res: Response): Promise<void> 
 };
 
 // ─────────────────────────────────────────────
-// DELETE /api/projects/:id
+// DELETE /api/projects/:id  — delete project
 // ─────────────────────────────────────────────
-export const deleteProject = async (req: Request, res: Response): Promise<void> => {
+export const deleteProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const deleted = await Project.findByIdAndDelete(req.params.id);
     if (!deleted) {

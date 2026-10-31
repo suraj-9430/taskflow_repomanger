@@ -1,15 +1,20 @@
-import { Request, Response } from 'express';
+import { Response } from 'express';
 import Task from '../models/task.model';
+import Project from '../models/project.model';
 import { publishToQueue } from '../utils/rabbitmq';
 import TaskComment from '../models/taskComment.model';
 import Notification from '../models/notification.model';
 import { getIO } from '../utils/socket';
 import mongoose from 'mongoose';
+import { AuthRequest } from '../middleware/auth.middleware';
+
+const VALID_STATUSES = ['To Do', 'In Progress', 'Completed'];
+const VALID_PRIORITIES = ['Low', 'Medium', 'High'];
 
 // ─────────────────────────────────────────────
-// GET /api/tasks  — fetch all tasks
+// GET /api/tasks  — fetch tasks scoped by role & permissions
 // ─────────────────────────────────────────────
-export const getAllTasks = async (req: Request, res: Response): Promise<void> => {
+export const getAllTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
       search,
@@ -22,20 +27,41 @@ export const getAllTasks = async (req: Request, res: Response): Promise<void> =>
     } = req.query;
 
     const query: any = {};
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
 
-    if (search && typeof search === 'string') {
+    // Object-level scoping: Non-admin/manager callers only see tasks assigned to them or in projects they belong to
+    if (userRole === 'employee' && userId) {
+      // Find projects where this employee is assigned
+      const assignedProjects = await Project.find({ assignees: userId }).select('_id');
+      const projectIds = assignedProjects.map(p => p._id);
+
       query.$or = [
-        { title: { $regex: search, $options: 'i' } },
-        { description: { $regex: search, $options: 'i' } },
-        { taskId: { $regex: search, $options: 'i' } },
+        { assignedTo: userId },
+        { projectId: { $in: projectIds } }
       ];
     }
 
-    if (status && typeof status === 'string' && status !== 'all') {
+    if (search && typeof search === 'string') {
+      const sanitized = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const searchConditions = [
+        { title: { $regex: sanitized, $options: 'i' } },
+        { description: { $regex: sanitized, $options: 'i' } },
+        { taskId: { $regex: sanitized, $options: 'i' } },
+      ];
+      if (query.$or) {
+        query.$and = [{ $or: query.$or }, { $or: searchConditions }];
+        delete query.$or;
+      } else {
+        query.$or = searchConditions;
+      }
+    }
+
+    if (status && typeof status === 'string' && status !== 'all' && VALID_STATUSES.includes(status)) {
       query.status = status;
     }
 
-    if (priority && typeof priority === 'string' && priority !== 'all') {
+    if (priority && typeof priority === 'string' && priority !== 'all' && VALID_PRIORITIES.includes(priority)) {
       query.priority = priority;
     }
 
@@ -69,19 +95,42 @@ export const getAllTasks = async (req: Request, res: Response): Promise<void> =>
   }
 };
 
-export const bulkUpdateTasks = async (req: Request, res: Response): Promise<void> => {
+// ─────────────────────────────────────────────
+// PUT /api/tasks/bulk  — management bulk update
+// ─────────────────────────────────────────────
+export const bulkUpdateTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { taskIds, updates } = req.body;
+    const userRole = req.user?.role;
+
+    if (userRole === 'employee') {
+      res.status(403).json({ success: false, message: 'Employees are not authorized to perform bulk task updates' });
+      return;
+    }
 
     if (!Array.isArray(taskIds) || taskIds.length === 0 || !updates || typeof updates !== 'object') {
       res.status(400).json({ success: false, message: 'taskIds and updates are required' });
       return;
     }
 
+    // Strict allowlist: ignore any attempt to modify _id, createdBy, taskId
     const allowedUpdates = ['status', 'priority', 'assignedTo', 'projectId', 'dueDate'];
-    const sanitizedUpdates = Object.fromEntries(
-      Object.entries(updates).filter(([key, value]) => allowedUpdates.includes(key) && value !== undefined && value !== '')
-    );
+    const sanitizedUpdates: any = {};
+    for (const key of allowedUpdates) {
+      if (updates[key] !== undefined && updates[key] !== '') {
+        sanitizedUpdates[key] = updates[key];
+      }
+    }
+
+    if (sanitizedUpdates.status && !VALID_STATUSES.includes(sanitizedUpdates.status)) {
+      res.status(400).json({ success: false, message: 'Invalid task status value' });
+      return;
+    }
+
+    if (sanitizedUpdates.priority && !VALID_PRIORITIES.includes(sanitizedUpdates.priority)) {
+      res.status(400).json({ success: false, message: 'Invalid task priority value' });
+      return;
+    }
 
     if (Object.keys(sanitizedUpdates).length === 0) {
       res.status(400).json({ success: false, message: 'No valid bulk update fields were provided' });
@@ -119,9 +168,18 @@ export const bulkUpdateTasks = async (req: Request, res: Response): Promise<void
   }
 };
 
-export const bulkDeleteTasks = async (req: Request, res: Response): Promise<void> => {
+// ─────────────────────────────────────────────
+// DELETE /api/tasks/bulk  — management bulk delete
+// ─────────────────────────────────────────────
+export const bulkDeleteTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { taskIds } = req.body;
+    const userRole = req.user?.role;
+
+    if (userRole === 'employee') {
+      res.status(403).json({ success: false, message: 'Employees are not authorized to perform bulk task deletions' });
+      return;
+    }
 
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
       res.status(400).json({ success: false, message: 'taskIds are required' });
@@ -140,12 +198,12 @@ export const bulkDeleteTasks = async (req: Request, res: Response): Promise<void
 };
 
 // ─────────────────────────────────────────────
-// GET /api/tasks/:id
+// GET /api/tasks/:id  — fetch single task with object-level authorization
 // ─────────────────────────────────────────────
-export const getTaskById = async (req: Request, res: Response): Promise<void> => {
+export const getTaskById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const task = await Task.findById(req.params.id)
-      .populate('projectId', 'projectName')
+      .populate('projectId', 'projectName assignees')
       .populate('assignedTo', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email');
 
@@ -153,6 +211,22 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
       res.status(404).json({ success: false, message: 'Task not found' });
       return;
     }
+
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // Verify access for employee role
+    if (userRole === 'employee' && userId) {
+      const isAssignee = task.assignedTo && (task.assignedTo as any)._id?.toString() === userId;
+      const projectAssignees = (task.projectId as any)?.assignees?.map((a: any) => a.toString()) || [];
+      const isInProject = projectAssignees.includes(userId);
+
+      if (!isAssignee && !isInProject) {
+        res.status(403).json({ success: false, message: 'You do not have access to view this task' });
+        return;
+      }
+    }
+
     res.status(200).json({ success: true, data: task });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch task', error: error.message });
@@ -160,9 +234,9 @@ export const getTaskById = async (req: Request, res: Response): Promise<void> =>
 };
 
 // ─────────────────────────────────────────────
-// POST /api/tasks  — create new task
+// POST /api/tasks  — create task with trusted identity
 // ─────────────────────────────────────────────
-export const createTask = async (req: Request, res: Response): Promise<void> => {
+export const createTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const {
       title,
@@ -172,23 +246,40 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
       status,
       priority,
       dueDate,
-      createdBy,
     } = req.body;
 
-    if (!title || !projectId || !createdBy) {
-      res.status(400).json({ success: false, message: 'Missing required fields' });
+    // PDF Section 3: Derive identity strictly from verified session
+    const createdBy = req.user?.id;
+
+    if (!createdBy) {
+      res.status(401).json({ success: false, message: 'User context missing from authenticated session' });
+      return;
+    }
+
+    if (!title || !projectId) {
+      res.status(400).json({ success: false, message: 'Title and projectId are required' });
+      return;
+    }
+
+    if (status && !VALID_STATUSES.includes(status)) {
+      res.status(400).json({ success: false, message: 'Invalid task status' });
+      return;
+    }
+
+    if (priority && !VALID_PRIORITIES.includes(priority)) {
+      res.status(400).json({ success: false, message: 'Invalid task priority' });
       return;
     }
 
     const task = new Task({
-      title,
-      description,
+      title: title.trim(),
+      description: description?.trim() || '',
       projectId,
-      assignedTo,
+      assignedTo: assignedTo || undefined,
       status: status || 'To Do',
       priority: priority || 'Medium',
       dueDate,
-      createdBy,
+      createdBy, // Trusted identity derived from token
     });
 
     await task.save();
@@ -215,9 +306,9 @@ export const createTask = async (req: Request, res: Response): Promise<void> => 
 };
 
 // ─────────────────────────────────────────────
-// PUT /api/tasks/:id  — update task
+// PUT /api/tasks/:id  — update task with allowlist and RBAC checks
 // ─────────────────────────────────────────────
-export const updateTask = async (req: Request, res: Response): Promise<void> => {
+export const updateTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const existingTask = await Task.findById(req.params.id);
     if (!existingTask) {
@@ -225,12 +316,55 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    const isStatusChanged = req.body.status && existingTask.status !== req.body.status;
+    const userId = req.user?.id;
+    const userRole = req.user?.role;
+
+    // Object-level permission evaluation
+    if (userRole === 'employee') {
+      const isAssigned = existingTask.assignedTo?.toString() === userId;
+      if (!isAssigned) {
+        res.status(403).json({ success: false, message: 'Employees can only update tasks assigned to them' });
+        return;
+      }
+
+      // Employees may only update their execution status and notes/description
+      const allowedEmployeeFields = ['status', 'description'];
+      const attemptedFields = Object.keys(req.body);
+      const unauthorizedFields = attemptedFields.filter(f => !allowedEmployeeFields.includes(f));
+      if (unauthorizedFields.length > 0) {
+        res.status(403).json({
+          success: false,
+          message: `Employees cannot modify: ${unauthorizedFields.join(', ')}`,
+        });
+        return;
+      }
+    }
+
+    // Explicit field allowlist (prevent mass assignment)
+    const allowedFields = ['title', 'description', 'status', 'priority', 'dueDate', 'assignedTo', 'projectId'];
+    const updateData: any = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updateData[field] = req.body[field];
+      }
+    }
+
+    if (updateData.status && !VALID_STATUSES.includes(updateData.status)) {
+      res.status(400).json({ success: false, message: 'Invalid task status' });
+      return;
+    }
+
+    if (updateData.priority && !VALID_PRIORITIES.includes(updateData.priority)) {
+      res.status(400).json({ success: false, message: 'Invalid task priority' });
+      return;
+    }
+
+    const isStatusChanged = updateData.status && existingTask.status !== updateData.status;
     const oldStatus = existingTask.status;
 
     const updated = await Task.findByIdAndUpdate(
       req.params.id,
-      { ...req.body },
+      { $set: updateData },
       { new: true, runValidators: true }
     )
       .populate('projectId', 'projectName')
@@ -242,11 +376,11 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
       return;
     }
 
-    if (req.body.assignedTo) {
+    if (updateData.assignedTo && updateData.assignedTo !== existingTask.assignedTo?.toString()) {
       await publishToQueue('task_assigned_queue', {
         taskId: updated._id,
         taskTitle: updated.title,
-        assigneeId: req.body.assignedTo,
+        assigneeId: updateData.assignedTo,
         projectId: updated.projectId,
       });
     }
@@ -275,10 +409,16 @@ export const updateTask = async (req: Request, res: Response): Promise<void> => 
 };
 
 // ─────────────────────────────────────────────
-// DELETE /api/tasks/:id
+// DELETE /api/tasks/:id  — role-authorized delete
 // ─────────────────────────────────────────────
-export const deleteTask = async (req: Request, res: Response): Promise<void> => {
+export const deleteTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
+    const userRole = req.user?.role;
+    if (userRole === 'employee') {
+      res.status(403).json({ success: false, message: 'Employees are not authorized to delete tasks' });
+      return;
+    }
+
     const deleted = await Task.findByIdAndDelete(req.params.id);
     if (!deleted) {
       res.status(404).json({ success: false, message: 'Task not found' });
@@ -293,7 +433,7 @@ export const deleteTask = async (req: Request, res: Response): Promise<void> => 
 // ─────────────────────────────────────────────
 // GET /api/tasks/:id/comments
 // ─────────────────────────────────────────────
-export const getTaskComments = async (req: Request, res: Response): Promise<void> => {
+export const getTaskComments = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const comments = await TaskComment.find({ taskId: id })
@@ -306,22 +446,29 @@ export const getTaskComments = async (req: Request, res: Response): Promise<void
 };
 
 // ─────────────────────────────────────────────
-// POST /api/tasks/:id/comments
+// POST /api/tasks/:id/comments  — comment with trusted sender identity
 // ─────────────────────────────────────────────
-export const createTaskComment = async (req: Request, res: Response): Promise<void> => {
+export const createTaskComment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const { senderId, content } = req.body;
+    const { content } = req.body;
+    // Derive senderId from authenticated token
+    const senderId = req.user?.id;
 
-    if (!senderId || !content) {
-      res.status(400).json({ success: false, message: 'senderId and content are required' });
+    if (!senderId) {
+      res.status(401).json({ success: false, message: 'Authentication required' });
+      return;
+    }
+
+    if (!content || typeof content !== 'string' || content.trim().length === 0) {
+      res.status(400).json({ success: false, message: 'Comment content is required' });
       return;
     }
 
     const comment = new TaskComment({
       taskId: id,
       senderId,
-      content,
+      content: content.trim(),
     });
 
     await comment.save();
