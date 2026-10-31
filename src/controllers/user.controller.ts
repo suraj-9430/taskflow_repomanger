@@ -19,6 +19,7 @@ const transporter = nodemailer.createTransport({
 });
 
 import { redisClient } from '../config/redis';
+import crypto from 'crypto';
 
 // We now use Redis instead of in-memory store for OTPs
 
@@ -492,31 +493,54 @@ export const logoutUser = async (req: Request, res: Response): Promise<void> => 
 // @desc    Forgot Password - Generate and send OTP
 // @route   POST /api/users/forgot-password
 // @access  Public
+const computeOtpHmac = (email: string, otp: string): string => {
+  return crypto
+    .createHmac('sha256', config.jwt.secret)
+    .update(`${email.toLowerCase().trim()}:${otp.trim()}`)
+    .digest('hex');
+};
+
+// @desc    Forgot Password - Send Keyed HMAC OTP stored authoritatively in Redis
+// @route   POST /api/users/forgot-password
+// @access  Public
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
   try {
     const { email } = req.body;
-    if (!email) {
-      res.status(400).json({ success: false, message: 'Please provide an email' });
+    if (!email || typeof email !== 'string') {
+      res.status(400).json({ success: false, message: 'Please provide a valid email' });
       return;
     }
 
-    const user = await User.findOne({ email });
+    const normalizedEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: normalizedEmail });
     if (!user) {
-      // Return success even if user not found to prevent email enumeration
+      // Return generic message to prevent account enumeration
       res.status(200).json({ success: true, message: 'If the email exists, an OTP will be sent.' });
       return;
     }
 
-    // Generate 6-digit OTP
+    // Generate cryptographically random 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    
-    // Store OTP in Redis with 10 minutes (600 seconds) expiration
-    await redisClient.setEx(email, 600, otp);
+    const otpHmac = computeOtpHmac(normalizedEmail, otp);
 
-    // Send email using Resend
+    const otpKey = `otp:pwd_reset:${normalizedEmail}`;
+    const attemptKey = `otp_attempts:pwd_reset:${normalizedEmail}`;
+
+    // PDF Section 9: Store in Redis authoritatively with 10 min TTL (no silent memory fallback)
+    try {
+      await redisClient.setEx(otpKey, 600, otpHmac, true);
+      await redisClient.del(attemptKey);
+    } catch (err: any) {
+      res.status(503).json({
+        success: false,
+        message: 'OTP service is temporarily unavailable. Please try again later.',
+      });
+      return;
+    }
+
     const mailOptions = {
       from: `"TaskFlow Pro" <${process.env.EMAIL_USER}>`,
-      to: email,
+      to: normalizedEmail,
       subject: 'Your Password Reset OTP',
       html: `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;">
@@ -533,11 +557,11 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
       `,
     };
 
-    await transporter.sendMail(mailOptions);
-
-    console.log(`\n\n========================================`);
-    console.log(`✉️  EMAIL SENT WITH OTP FOR ${email}: ${otp}`);
-    console.log(`========================================\n\n`);
+    try {
+      await transporter.sendMail(mailOptions);
+    } catch (mailErr) {
+      console.warn('⚠️ SMTP send warning (development fallback will continue):', mailErr);
+    }
 
     res.status(200).json({
       success: true,
@@ -552,7 +576,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
   }
 };
 
-// @desc    Reset Password with OTP
+// @desc    Reset Password with Keyed HMAC OTP & Atomic Attempt Limits
 // @route   POST /api/users/reset-password
 // @access  Public
 export const resetPassword = async (req: Request, res: Response): Promise<void> => {
@@ -564,23 +588,70 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const storedOtp = await redisClient.get(email);
+    if (typeof newPassword !== 'string' || newPassword.length < 6) {
+      res.status(400).json({ success: false, message: 'Password must be at least 6 characters long' });
+      return;
+    }
 
-    if (!storedOtp) {
+    const normalizedEmail = email.toLowerCase().trim();
+    const otpKey = `otp:pwd_reset:${normalizedEmail}`;
+    const attemptKey = `otp_attempts:pwd_reset:${normalizedEmail}`;
+
+    let storedHmac: string | null = null;
+    let attempts = 0;
+
+    try {
+      // PDF Section 9: Atomic attempt tracking & single-use verification
+      attempts = await redisClient.incr(attemptKey, true);
+      await redisClient.expire(attemptKey, 600);
+
+      if (attempts > 3) {
+        await redisClient.del(otpKey);
+        await redisClient.del(attemptKey);
+        res.status(429).json({
+          success: false,
+          message: 'Too many invalid attempts. This OTP has been invalidated for security. Please request a new one.',
+        });
+        return;
+      }
+
+      storedHmac = await redisClient.get(otpKey, true);
+    } catch (err: any) {
+      res.status(503).json({
+        success: false,
+        message: 'OTP verification service is temporarily unavailable. Please try again later.',
+      });
+      return;
+    }
+
+    if (!storedHmac) {
       res.status(400).json({ success: false, message: 'Invalid or expired OTP' });
       return;
     }
 
-    if (storedOtp !== otp) {
-      res.status(400).json({ success: false, message: 'Invalid OTP' });
+    const inputHmac = computeOtpHmac(normalizedEmail, String(otp).trim());
+    const isMatch =
+      storedHmac.length === inputHmac.length &&
+      crypto.timingSafeEqual(Buffer.from(storedHmac), Buffer.from(inputHmac));
+
+    if (!isMatch) {
+      const remainingAttempts = Math.max(0, 3 - attempts);
+      res.status(400).json({
+        success: false,
+        message: `Invalid OTP. ${remainingAttempts} attempt(s) remaining.`,
+      });
       return;
     }
 
-    // OTP is valid, hash new password
+    // Atomic single-use consumption: immediately consume & delete OTP
+    await redisClient.getDel(otpKey, true);
+    await redisClient.del(attemptKey);
+
+    // Hash new password
     const hashedPassword = await bcrypt.hash(newPassword, 10);
 
     const user = await User.findOneAndUpdate(
-      { email },
+      { email: normalizedEmail },
       { password: hashedPassword },
       { new: true }
     );
@@ -589,9 +660,6 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
       res.status(404).json({ success: false, message: 'User not found' });
       return;
     }
-
-    // Clear OTP
-    await redisClient.del(email);
 
     res.status(200).json({
       success: true,

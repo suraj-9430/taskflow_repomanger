@@ -1,26 +1,34 @@
-import { createClient } from 'redis';
+import { createClient, RedisClientType } from 'redis';
+import { config } from './index';
 
 let isRedisConnected = false;
 const inMemoryStore = new Map<string, { value: string; expiresAt: number }>();
 
+export class RedisUnavailableError extends Error {
+  constructor(message = 'Authoritative Redis service is temporarily unavailable') {
+    super(message);
+    this.name = 'RedisUnavailableError';
+  }
+}
+
 const realRedisClient = createClient({
-  url: process.env.REDIS_URL || 'redis://localhost:6379',
+  url: config.redis.url,
   socket: {
     reconnectStrategy: (retries) => {
-      if (retries >= 2) {
+      if (retries >= 3) {
         return false;
       }
-      return 500;
-    }
-  }
+      return 1000;
+    },
+  },
 });
 
 let errorLogged = false;
 
 realRedisClient.on('error', () => {
   isRedisConnected = false;
-  if (!errorLogged) {
-    console.warn('⚠️  Local Redis server not found. Switching to in-memory store.');
+  if (!errorLogged && config.nodeEnv !== 'test') {
+    console.warn('⚠️ Redis server connection error. Strict authoritative operations will fail safely.');
     errorLogged = true;
   }
 });
@@ -28,39 +36,64 @@ realRedisClient.on('error', () => {
 realRedisClient.on('connect', () => {
   isRedisConnected = true;
   errorLogged = false;
-  console.log('✅ Redis Client Connected');
+  if (config.nodeEnv !== 'test') {
+    console.log('✅ Redis Client Connected');
+  }
 });
 
 export const connectRedis = async (): Promise<void> => {
   try {
-    await realRedisClient.connect();
+    if (!realRedisClient.isOpen) {
+      await realRedisClient.connect();
+    }
   } catch (error) {
     isRedisConnected = false;
   }
 };
 
+export const getRawRedisClient = (): RedisClientType => realRedisClient as RedisClientType;
+
 class RedisService {
-  async setEx(key: string, seconds: number, value: string): Promise<string> {
-    if (isRedisConnected && realRedisClient.isOpen) {
+  isAvailable(): boolean {
+    return isRedisConnected && realRedisClient.isOpen;
+  }
+
+  async setEx(key: string, seconds: number, value: string, requireAuthoritative = false): Promise<string> {
+    if (this.isAvailable()) {
       try {
         await realRedisClient.setEx(key, seconds, value);
         return 'OK';
       } catch (err) {
-        console.warn('⚠️  Redis setEx error, falling back to in-memory store:', err);
+        if (requireAuthoritative) {
+          throw new RedisUnavailableError('Failed to persist to authoritative Redis store');
+        }
       }
     }
+
+    if (requireAuthoritative) {
+      throw new RedisUnavailableError();
+    }
+
+    // Process-local fallback ONLY permitted for non-security caches
     inMemoryStore.set(key, { value, expiresAt: Date.now() + seconds * 1000 });
     return 'OK';
   }
 
-  async get(key: string): Promise<string | null> {
-    if (isRedisConnected && realRedisClient.isOpen) {
+  async get(key: string, requireAuthoritative = false): Promise<string | null> {
+    if (this.isAvailable()) {
       try {
         return await realRedisClient.get(key);
       } catch (err) {
-        console.warn('⚠️  Redis get error, falling back to in-memory store:', err);
+        if (requireAuthoritative) {
+          throw new RedisUnavailableError('Failed to read from authoritative Redis store');
+        }
       }
     }
+
+    if (requireAuthoritative) {
+      throw new RedisUnavailableError();
+    }
+
     const item = inMemoryStore.get(key);
     if (!item) return null;
     if (Date.now() > item.expiresAt) {
@@ -71,18 +104,87 @@ class RedisService {
   }
 
   async del(key: string): Promise<number> {
-    if (isRedisConnected && realRedisClient.isOpen) {
+    if (this.isAvailable()) {
       try {
         return await realRedisClient.del(key);
       } catch (err) {
-        console.warn('⚠️  Redis del error, falling back to in-memory store:', err);
+        // Fall through to clear memory store
       }
     }
     const existed = inMemoryStore.has(key);
     inMemoryStore.delete(key);
     return existed ? 1 : 0;
   }
+
+  /**
+   * Atomic single-use retrieval and deletion (PDF Section 9)
+   */
+  async getDel(key: string, requireAuthoritative = false): Promise<string | null> {
+    if (this.isAvailable()) {
+      try {
+        // Redis 6.2+ native GETDEL command
+        const val = await (realRedisClient as any).getDel(key);
+        return val ?? null;
+      } catch (err) {
+        if (requireAuthoritative) {
+          throw new RedisUnavailableError('Failed to atomically consume key from Redis');
+        }
+      }
+    }
+
+    if (requireAuthoritative) {
+      throw new RedisUnavailableError();
+    }
+
+    const item = inMemoryStore.get(key);
+    if (!item) return null;
+    inMemoryStore.delete(key);
+    if (Date.now() > item.expiresAt) {
+      return null;
+    }
+    return item.value;
+  }
+
+  /**
+   * Atomic increment for attempt tracking
+   */
+  async incr(key: string, requireAuthoritative = false): Promise<number> {
+    if (this.isAvailable()) {
+      try {
+        return await realRedisClient.incr(key);
+      } catch (err) {
+        if (requireAuthoritative) {
+          throw new RedisUnavailableError('Failed to increment attempt counter in Redis');
+        }
+      }
+    }
+
+    if (requireAuthoritative) {
+      throw new RedisUnavailableError();
+    }
+
+    const item = inMemoryStore.get(key);
+    const current = item ? parseInt(item.value, 10) || 0 : 0;
+    const nextVal = current + 1;
+    inMemoryStore.set(key, { value: String(nextVal), expiresAt: Date.now() + 600 * 1000 });
+    return nextVal;
+  }
+
+  async expire(key: string, seconds: number): Promise<boolean> {
+    if (this.isAvailable()) {
+      try {
+        return Boolean(await realRedisClient.expire(key, seconds));
+      } catch (err) {
+        return false;
+      }
+    }
+    const item = inMemoryStore.get(key);
+    if (item) {
+      item.expiresAt = Date.now() + seconds * 1000;
+      return true;
+    }
+    return false;
+  }
 }
 
 export const redisClient = new RedisService();
-
