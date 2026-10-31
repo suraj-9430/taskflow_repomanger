@@ -72,6 +72,10 @@ const projectSchema = new Schema<IProject>(
   }
 );
 
+// Compound indexes for common assignee queries and deterministic sorting
+projectSchema.index({ assignees: 1, status: 1 });
+projectSchema.index({ createdAt: -1, _id: -1 });
+
 projectSchema.pre('validate', async function (next) {
   if (this.isNew && !this.projectId) {
     const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();

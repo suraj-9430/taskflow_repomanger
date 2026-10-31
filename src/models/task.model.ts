@@ -63,6 +63,11 @@ const taskSchema = new Schema<ITask>(
   }
 );
 
+// Compound indexes optimized for query and sort patterns (PDF Section 8)
+taskSchema.index({ projectId: 1, status: 1, dueDate: 1 });
+taskSchema.index({ assignedTo: 1, status: 1, createdAt: -1 });
+taskSchema.index({ createdAt: -1, _id: -1 });
+
 taskSchema.pre('validate', async function (next) {
   if (this.isNew && !this.taskId) {
     const randomStr = Math.random().toString(36).substring(2, 6).toUpperCase();

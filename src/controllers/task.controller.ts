@@ -7,12 +7,14 @@ import Notification from '../models/notification.model';
 import { getIO } from '../utils/socket';
 import mongoose from 'mongoose';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { parsePagination, buildPaginatedResponse } from '../utils/pagination';
+import { invalidateTag } from '../utils/cache';
 
 const VALID_STATUSES = ['To Do', 'In Progress', 'Completed'];
 const VALID_PRIORITIES = ['Low', 'Medium', 'High'];
 
 // ─────────────────────────────────────────────
-// GET /api/tasks  — fetch tasks scoped by role & permissions
+// GET /api/tasks  — fetch tasks scoped by role & bounded by pagination
 // ─────────────────────────────────────────────
 export const getAllTasks = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -32,7 +34,6 @@ export const getAllTasks = async (req: AuthRequest, res: Response): Promise<void
 
     // Object-level scoping: Non-admin/manager callers only see tasks assigned to them or in projects they belong to
     if (userRole === 'employee' && userId) {
-      // Find projects where this employee is assigned
       const assignedProjects = await Project.find({ assignees: userId }).select('_id');
       const projectIds = assignedProjects.map(p => p._id);
 
@@ -83,13 +84,22 @@ export const getAllTasks = async (req: AuthRequest, res: Response): Promise<void
       }
     }
 
-    const tasks = await Task.find(query)
-      .populate('projectId', 'projectName')
-      .populate('assignedTo', 'firstName lastName email designation')
-      .populate('createdBy', 'firstName lastName email')
-      .sort({ createdAt: -1 });
+    // PDF Section 7: Bounded pagination (default 20, max 100) with deterministic tie-breaker
+    const pagination = parsePagination(req.query, 20, 100);
 
-    res.status(200).json({ success: true, data: tasks });
+    const [totalCount, tasks] = await Promise.all([
+      Task.countDocuments(query),
+      Task.find(query)
+        .populate('projectId', 'projectName')
+        .populate('assignedTo', 'firstName lastName email designation')
+        .populate('createdBy', 'firstName lastName email')
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit),
+    ]);
+
+    const paginated = buildPaginatedResponse(tasks, totalCount, pagination);
+    res.status(200).json(paginated);
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch tasks', error: error.message });
   }
@@ -113,7 +123,6 @@ export const bulkUpdateTasks = async (req: AuthRequest, res: Response): Promise<
       return;
     }
 
-    // Strict allowlist: ignore any attempt to modify _id, createdBy, taskId
     const allowedUpdates = ['status', 'priority', 'assignedTo', 'projectId', 'dueDate'];
     const sanitizedUpdates: any = {};
     for (const key of allowedUpdates) {
@@ -143,7 +152,7 @@ export const bulkUpdateTasks = async (req: AuthRequest, res: Response): Promise<
       .populate('projectId', 'projectName')
       .populate('assignedTo', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email')
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1, _id: -1 });
 
     if (sanitizedUpdates.assignedTo) {
       await Promise.all(
@@ -157,6 +166,9 @@ export const bulkUpdateTasks = async (req: AuthRequest, res: Response): Promise<
         )
       );
     }
+
+    // Invalidate caches for tasks
+    await invalidateTag('tasks');
 
     res.status(200).json({
       success: true,
@@ -188,6 +200,9 @@ export const bulkDeleteTasks = async (req: AuthRequest, res: Response): Promise<
 
     const result = await Task.deleteMany({ _id: { $in: taskIds } });
 
+    // Invalidate caches
+    await invalidateTag('tasks');
+
     res.status(200).json({
       success: true,
       message: `${result.deletedCount || 0} tasks deleted successfully`,
@@ -198,7 +213,7 @@ export const bulkDeleteTasks = async (req: AuthRequest, res: Response): Promise<
 };
 
 // ─────────────────────────────────────────────
-// GET /api/tasks/:id  — fetch single task with object-level authorization
+// GET /api/tasks/:id
 // ─────────────────────────────────────────────
 export const getTaskById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -215,7 +230,6 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Verify access for employee role
     if (userRole === 'employee' && userId) {
       const isAssignee = task.assignedTo && (task.assignedTo as any)._id?.toString() === userId;
       const projectAssignees = (task.projectId as any)?.assignees?.map((a: any) => a.toString()) || [];
@@ -234,7 +248,7 @@ export const getTaskById = async (req: AuthRequest, res: Response): Promise<void
 };
 
 // ─────────────────────────────────────────────
-// POST /api/tasks  — create task with trusted identity
+// POST /api/tasks
 // ─────────────────────────────────────────────
 export const createTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -248,7 +262,6 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       dueDate,
     } = req.body;
 
-    // PDF Section 3: Derive identity strictly from verified session
     const createdBy = req.user?.id;
 
     if (!createdBy) {
@@ -279,7 +292,7 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       status: status || 'To Do',
       priority: priority || 'Medium',
       dueDate,
-      createdBy, // Trusted identity derived from token
+      createdBy,
     });
 
     await task.save();
@@ -289,7 +302,6 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       .populate('assignedTo', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email');
 
-    // Fire event to RabbitMQ for email notification
     if (assignedTo) {
       await publishToQueue('task_assigned_queue', {
         taskId: task._id,
@@ -299,6 +311,9 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
       });
     }
 
+    // Invalidate caches
+    await invalidateTag('tasks');
+
     res.status(201).json({ success: true, message: 'Task created successfully', data: populated });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to create task', error: error.message });
@@ -306,7 +321,7 @@ export const createTask = async (req: AuthRequest, res: Response): Promise<void>
 };
 
 // ─────────────────────────────────────────────
-// PUT /api/tasks/:id  — update task with allowlist and RBAC checks
+// PUT /api/tasks/:id
 // ─────────────────────────────────────────────
 export const updateTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -319,7 +334,6 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Object-level permission evaluation
     if (userRole === 'employee') {
       const isAssigned = existingTask.assignedTo?.toString() === userId;
       if (!isAssigned) {
@@ -327,7 +341,6 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
         return;
       }
 
-      // Employees may only update their execution status and notes/description
       const allowedEmployeeFields = ['status', 'description'];
       const attemptedFields = Object.keys(req.body);
       const unauthorizedFields = attemptedFields.filter(f => !allowedEmployeeFields.includes(f));
@@ -340,7 +353,6 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       }
     }
 
-    // Explicit field allowlist (prevent mass assignment)
     const allowedFields = ['title', 'description', 'status', 'priority', 'dueDate', 'assignedTo', 'projectId'];
     const updateData: any = {};
     for (const field of allowedFields) {
@@ -385,7 +397,6 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       });
     }
 
-    // Notify assigner if task status is updated
     if (isStatusChanged && updated.createdBy) {
       const assigneeName = updated.assignedTo
         ? `${(updated.assignedTo as any).firstName} ${(updated.assignedTo as any).lastName}`
@@ -402,6 +413,9 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
       });
     }
 
+    // Invalidate caches
+    await invalidateTag('tasks');
+
     res.status(200).json({ success: true, message: 'Task updated successfully', data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to update task', error: error.message });
@@ -409,7 +423,7 @@ export const updateTask = async (req: AuthRequest, res: Response): Promise<void>
 };
 
 // ─────────────────────────────────────────────
-// DELETE /api/tasks/:id  — role-authorized delete
+// DELETE /api/tasks/:id
 // ─────────────────────────────────────────────
 export const deleteTask = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -424,6 +438,10 @@ export const deleteTask = async (req: AuthRequest, res: Response): Promise<void>
       res.status(404).json({ success: false, message: 'Task not found' });
       return;
     }
+
+    // Invalidate caches
+    await invalidateTag('tasks');
+
     res.status(200).json({ success: true, message: 'Task deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to delete task', error: error.message });
@@ -438,7 +456,7 @@ export const getTaskComments = async (req: AuthRequest, res: Response): Promise<
     const { id } = req.params;
     const comments = await TaskComment.find({ taskId: id })
       .populate('senderId', 'firstName lastName email designation avatar role')
-      .sort({ createdAt: 1 });
+      .sort({ createdAt: 1, _id: 1 });
     res.status(200).json({ success: true, data: comments });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch comments', error: error.message });
@@ -446,13 +464,12 @@ export const getTaskComments = async (req: AuthRequest, res: Response): Promise<
 };
 
 // ─────────────────────────────────────────────
-// POST /api/tasks/:id/comments  — comment with trusted sender identity
+// POST /api/tasks/:id/comments
 // ─────────────────────────────────────────────
 export const createTaskComment = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
     const { content } = req.body;
-    // Derive senderId from authenticated token
     const senderId = req.user?.id;
 
     if (!senderId) {
@@ -476,7 +493,6 @@ export const createTaskComment = async (req: AuthRequest, res: Response): Promis
     const populated = await TaskComment.findById(comment._id)
       .populate('senderId', 'firstName lastName email designation avatar role');
 
-    // Automatically trigger notification for the other active user on the task
     const task = await Task.findById(id);
     if (task) {
       const otherUserId = String(task.assignedTo) === String(senderId) ? task.createdBy : task.assignedTo;
@@ -495,13 +511,11 @@ export const createTaskComment = async (req: AuthRequest, res: Response): Promis
       }
     }
 
-    // Emit Socket.IO event to all clients in the task's room
     try {
       const io = getIO();
       io.to(`task_${id}`).emit('new_comment', populated);
-      console.log(`📡 Broadcasted new comment to room: task_${id}`);
     } catch (err: any) {
-      console.warn('Socket emit warning (Socket may not be initialized yet):', err.message);
+      // socket fallback
     }
 
     res.status(201).json({ success: true, data: populated });

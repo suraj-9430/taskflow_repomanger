@@ -3,12 +3,14 @@ import Project from '../models/project.model';
 import { publishToQueue } from '../utils/rabbitmq';
 import mongoose from 'mongoose';
 import { AuthRequest } from '../middleware/auth.middleware';
+import { parsePagination, buildPaginatedResponse } from '../utils/pagination';
+import { invalidateTag } from '../utils/cache';
 
 const VALID_STATUSES = ['In Progress', 'Completed', 'On Hold'];
 const VALID_PRIORITIES = ['Low', 'Medium', 'High'];
 
 // ─────────────────────────────────────────────
-// GET /api/projects  — fetch projects scoped to caller role
+// GET /api/projects  — fetch projects scoped to caller role with bounded pagination
 // ─────────────────────────────────────────────
 export const getAllProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -17,7 +19,6 @@ export const getAllProjects = async (req: AuthRequest, res: Response): Promise<v
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Scope for standard employees: only show projects they are assigned to
     if (userRole === 'employee' && userId) {
       query.assignees = userId;
     }
@@ -53,19 +54,28 @@ export const getAllProjects = async (req: AuthRequest, res: Response): Promise<v
       }
     }
 
-    const projects = await Project.find(query)
-      .populate('assignees', 'firstName lastName email designation')
-      .populate('createdBy', 'firstName lastName email')
-      .sort({ createdAt: -1 });
+    // PDF Section 7: Bounded pagination
+    const pagination = parsePagination(req.query, 20, 100);
 
-    res.status(200).json({ success: true, data: projects });
+    const [totalCount, projects] = await Promise.all([
+      Project.countDocuments(query),
+      Project.find(query)
+        .populate('assignees', 'firstName lastName email designation')
+        .populate('createdBy', 'firstName lastName email')
+        .sort({ createdAt: -1, _id: -1 })
+        .skip(pagination.skip)
+        .limit(pagination.limit),
+    ]);
+
+    const paginated = buildPaginatedResponse(projects, totalCount, pagination);
+    res.status(200).json(paginated);
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to fetch projects', error: error.message });
   }
 };
 
 // ─────────────────────────────────────────────
-// PUT /api/projects/bulk  — management bulk update
+// PUT /api/projects/bulk
 // ─────────────────────────────────────────────
 export const bulkUpdateProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -110,7 +120,10 @@ export const bulkUpdateProjects = async (req: AuthRequest, res: Response): Promi
     const projects = await Project.find({ _id: { $in: projectIds } })
       .populate('assignees', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email')
-      .sort({ updatedAt: -1 });
+      .sort({ updatedAt: -1, _id: -1 });
+
+    // Invalidate project caches
+    await invalidateTag('projects');
 
     res.status(200).json({
       success: true,
@@ -123,7 +136,7 @@ export const bulkUpdateProjects = async (req: AuthRequest, res: Response): Promi
 };
 
 // ─────────────────────────────────────────────
-// DELETE /api/projects/bulk  — management bulk delete
+// DELETE /api/projects/bulk
 // ─────────────────────────────────────────────
 export const bulkDeleteProjects = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -142,6 +155,9 @@ export const bulkDeleteProjects = async (req: AuthRequest, res: Response): Promi
 
     const result = await Project.deleteMany({ _id: { $in: projectIds } });
 
+    // Invalidate project caches
+    await invalidateTag('projects');
+
     res.status(200).json({
       success: true,
       message: `${result.deletedCount || 0} projects deleted successfully`,
@@ -152,7 +168,7 @@ export const bulkDeleteProjects = async (req: AuthRequest, res: Response): Promi
 };
 
 // ─────────────────────────────────────────────
-// GET /api/projects/:id  — fetch single project
+// GET /api/projects/:id
 // ─────────────────────────────────────────────
 export const getProjectById = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -168,7 +184,6 @@ export const getProjectById = async (req: AuthRequest, res: Response): Promise<v
     const userId = req.user?.id;
     const userRole = req.user?.role;
 
-    // Check project assignment for employees
     if (userRole === 'employee' && userId) {
       const isAssignee = project.assignees.some((a: any) => a._id?.toString() === userId || a.toString() === userId);
       if (!isAssignee) {
@@ -184,7 +199,7 @@ export const getProjectById = async (req: AuthRequest, res: Response): Promise<v
 };
 
 // ─────────────────────────────────────────────
-// POST /api/projects  — create project with trusted session identity
+// POST /api/projects
 // ─────────────────────────────────────────────
 export const createProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -199,7 +214,6 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
       assignees,
     } = req.body;
 
-    // Trusted identity derived directly from authenticated session
     const createdBy = req.user?.id;
 
     if (!createdBy) {
@@ -231,7 +245,7 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
       priority: priority || 'Medium',
       progress: progress ?? 0,
       assignees: assignees || [],
-      createdBy, // Token-derived identity
+      createdBy,
     });
 
     await project.save();
@@ -240,7 +254,6 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
       .populate('assignees', 'firstName lastName email designation')
       .populate('createdBy', 'firstName lastName email');
 
-    // Fire background notification job
     if (assignees && assignees.length > 0) {
       await publishToQueue('project_assigned_queue', {
         projectId: project._id,
@@ -249,6 +262,9 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
       });
     }
 
+    // Invalidate project caches
+    await invalidateTag('projects');
+
     res.status(201).json({ success: true, message: 'Project created successfully', data: populated });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to create project', error: error.message });
@@ -256,7 +272,7 @@ export const createProject = async (req: AuthRequest, res: Response): Promise<vo
 };
 
 // ─────────────────────────────────────────────
-// PUT /api/projects/:id  — update project with field allowlist
+// PUT /api/projects/:id
 // ─────────────────────────────────────────────
 export const updateProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -291,6 +307,9 @@ export const updateProject = async (req: AuthRequest, res: Response): Promise<vo
       return;
     }
 
+    // Invalidate project caches
+    await invalidateTag('projects');
+
     res.status(200).json({ success: true, message: 'Project updated successfully', data: updated });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to update project', error: error.message });
@@ -298,7 +317,7 @@ export const updateProject = async (req: AuthRequest, res: Response): Promise<vo
 };
 
 // ─────────────────────────────────────────────
-// DELETE /api/projects/:id  — delete project
+// DELETE /api/projects/:id
 // ─────────────────────────────────────────────
 export const deleteProject = async (req: AuthRequest, res: Response): Promise<void> => {
   try {
@@ -307,6 +326,10 @@ export const deleteProject = async (req: AuthRequest, res: Response): Promise<vo
       res.status(404).json({ success: false, message: 'Project not found' });
       return;
     }
+
+    // Invalidate project caches
+    await invalidateTag('projects');
+
     res.status(200).json({ success: true, message: 'Project deleted successfully' });
   } catch (error: any) {
     res.status(500).json({ success: false, message: 'Failed to delete project', error: error.message });
